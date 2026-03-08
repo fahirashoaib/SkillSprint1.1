@@ -18,9 +18,15 @@ export const LoadingPage = () => (
   </div>
 );
 
-export const ErrorMessage = ({ message, onRetry }) => (
-  <div className="text-center">
-    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+export const LoadingInline = () => (
+  <div className="flex justify-center py-8">
+    <LoadingSpinner size="md" />
+  </div>
+);
+
+export const ErrorDisplay = ({ message, onRetry }) => (
+  <div className="text-center py-8">
+    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 max-w-md mx-auto">
       {message}
     </div>
     {onRetry && (

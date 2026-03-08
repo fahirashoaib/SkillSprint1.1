@@ -26,7 +26,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create course (for initial data seeding)
+// Create course (admin only)
 router.post('/',protect, admin, async (req, res) => {
   try {
     if (!req.body.courseId || !req.body.title) {

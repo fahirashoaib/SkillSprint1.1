@@ -5,21 +5,6 @@ import { Rocket, Target, TrendingUp, BookOpen } from 'lucide-react';
 const Home = () => {
   return (
     <div className="min-h-screen">
-      {/* Hero Section
-      <section className="bg-gradient-to-br from-blue-600 to-purple-700 text-white rounded-2xl p-8 mb-8">
-        <div className="max-w-4xl mx-auto text-center">
-          <h1 className="text-4xl md:text-5xl font-bold mb-6">
-            Accelerate Your Learning Journey
-          </h1>
-          <p className="text-xl mb-8 text-blue-100 max-w-2xl mx-auto">
-            Master new skills through interactive courses, earn achievements, and track your progress with SkillSprint.
-          </p>
-          <Link to="/courses" className="btn-primary bg-white text-blue-600 hover:bg-blue-50 text-lg px-8 py-3 inline-block">
-            Start Sprinting Now
-          </Link>
-        </div>
-      </section> */}
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12 mb-12">
         <div className="card text-center">
           <div className="flex justify-center mb-3">

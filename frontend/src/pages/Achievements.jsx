@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { courseAPI } from '../services/api';
-import LoadingSpinner from '../components/LoadingSpinner';
-import { Trophy, BookOpen, Star, Target, Award, Lock, ArrowLeft } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { LoadingPage } from '../components/LoadingSpinner';
+import StatCard from '../components/StatCard';
+import BackButton from '../components/BackButton';
+import ProgressBar from '../components/ProgressBar';
+import { Trophy, BookOpen, Star, Target, Award, Lock } from 'lucide-react';
 
 const Achievements = () => {
   const [courses, setCourses] = useState([]);
@@ -13,7 +15,6 @@ const Achievements = () => {
     totalXP: 0,
     totalScreens: 0
   });
-  const navigate = useNavigate();
 
   useEffect(() => {
     const fetchCourses = async () => {
@@ -21,7 +22,6 @@ const Achievements = () => {
         const response = await courseAPI.getAll();
         setCourses(response.data);
         
-        // Calculate stats
         const totalCourses = response.data.length;
         const totalXP = response.data.reduce((sum, course) => sum + course.totalXP, 0);
         const totalScreens = response.data.reduce((sum, course) => 
@@ -30,7 +30,7 @@ const Achievements = () => {
         
         setStats({
           totalCourses,
-          completedCourses: 0,
+          completedCourses: 0, // This would come from user data
           totalXP,
           totalScreens
         });
@@ -44,13 +44,7 @@ const Achievements = () => {
     fetchCourses();
   }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingPage />;
 
   const achievements = [
     {
@@ -76,68 +70,39 @@ const Achievements = () => {
       icon: Target,
       completed: false,
       progress: Math.min((stats.completedCourses / stats.totalCourses) * 100, 100)
-    },
-    // {
-    //   id: 4,
-    //   name: 'Code Champion',
-    //   description: 'Complete 50 coding challenges',
-    //   icon: Award,
-    //   completed: false,
-    //   progress: 0
-    // },
-    // {
-    //   id: 5,
-    //   name: 'Quiz Expert',
-    //   description: 'Answer 100 questions correctly',
-    //   icon: Star,
-    //   completed: false,
-    //   progress: 0
-    // },
-    // {
-    //   id: 6,
-    //   name: 'Knowledge Seeker',
-    //   description: 'Spend 10 hours learning',
-    //   icon: Lock,
-    //   completed: false,
-    //   progress: 0
-    // }
+    }
   ];
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
-      {/* Back to Courses Button */}
-      <div className="mb-4 pb-4 border-b border-gray-200">
-        <button
-          onClick={() => navigate(`/`)}
-          className="flex items-center text-gray-600 hover:text-gray-900 transition-colors text-sm font-medium"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Home
-        </button>
-      </div>
+      
       <div className="max-w-7xl mx-auto px-4">
-        {/* Stats Overview */}
+        {/* Stats Overview - USING STATCARD */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="card text-center">
-            <BookOpen className="w-8 h-8 text-blue-600 mx-auto mb-2" />
-            <h3 className="text-lg font-semibold text-gray-900">Total Courses</h3>
-            <p className="text-2xl font-bold text-blue-600">{stats.totalCourses}</p>
-          </div>
-          <div className="card text-center">
-            <Target className="w-8 h-8 text-green-600 mx-auto mb-2" />
-            <h3 className="text-lg font-semibold text-gray-900">Completed</h3>
-            <p className="text-2xl font-bold text-green-600">{stats.completedCourses}</p>
-          </div>
-          <div className="card text-center">
-            <Star className="w-8 h-8 text-yellow-600 mx-auto mb-2" />
-            <h3 className="text-lg font-semibold text-gray-900">Total XP</h3>
-            <p className="text-2xl font-bold text-yellow-600">{stats.totalXP}</p>
-          </div>
-          <div className="card text-center">
-            <BookOpen className="w-8 h-8 text-purple-600 mx-auto mb-2" />
-            <h3 className="text-lg font-semibold text-gray-900">Total Screens</h3>
-            <p className="text-2xl font-bold text-purple-600">{stats.totalScreens}</p>
-          </div>
+          <StatCard 
+            icon={BookOpen}
+            title="Total Courses"
+            value={stats.totalCourses}
+            color="blue"
+          />
+          <StatCard 
+            icon={Target}
+            title="Completed"
+            value={stats.completedCourses}
+            color="green"
+          />
+          <StatCard 
+            icon={Star}
+            title="Total XP"
+            value={stats.totalXP}
+            color="yellow"
+          />
+          <StatCard 
+            icon={BookOpen}
+            title="Total Screens"
+            value={stats.totalScreens}
+            color="purple"
+          />
         </div>
 
         {/* Achievements Grid */}
@@ -162,15 +127,15 @@ const Achievements = () => {
                 <p className="text-gray-600 mb-4">{achievement.description}</p>
                 
                 {achievement.progress > 0 && (
-                  <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                    <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                      style={{ width: `${achievement.progress}%` }}
-                    ></div>
-                  </div>
+                  <ProgressBar 
+                    progress={achievement.progress} 
+                    size="sm"
+                    color="blue"
+                    showLabel={false}
+                  />
                 )}
                 
-                <div className="flex items-center justify-center">
+                <div className="flex items-center justify-center mt-4">
                   {achievement.completed ? (
                     <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
                       <Target className="w-4 h-4 mr-1" />
@@ -207,17 +172,6 @@ const Achievements = () => {
                 </div>
               </div>
               <span className="text-sm text-gray-500">Just now</span>
-            </div>
-            
-            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <BookOpen className="w-6 h-6 text-gray-600" />
-                <div>
-                  <p className="font-medium text-gray-900">Explore Courses</p>
-                  <p className="text-sm text-gray-600">Browse available courses to start learning</p>
-                </div>
-              </div>
-              <span className="text-sm text-gray-500">Today</span>
             </div>
             
             <div className="text-center py-8">

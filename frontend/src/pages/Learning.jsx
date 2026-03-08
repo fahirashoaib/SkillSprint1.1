@@ -2,10 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom'; // Added useNavigate and Link
 import { courseAPI } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { ChevronRight, CheckCircle, ArrowLeft } from 'lucide-react'; // Added ArrowLeft
+import { ChevronRight, ArrowLeft } from 'lucide-react'; // Added ArrowLeft
 import { progressAPI } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const Learning = () => {
+
+  const { user } = useAuth();  // Add this
   const { courseId, unitId, screenId } = useParams();
   const navigate = useNavigate(); // Added navigate
   const [course, setCourse] = useState(null);
@@ -57,7 +60,7 @@ const Learning = () => {
     return null;
   };
 
-  const handleAnswerSubmit = () => {
+  const handleAnswerSubmit = async () => {
     const currentQuestion = getCurrentQuestion();
     if (!currentQuestion) return;
 
@@ -68,10 +71,26 @@ const Learning = () => {
     setIsCorrect(correct);
     setShowExplanation(true);
 
+    let earnedXP = 0;
     if (correct && currentQuestion.xp) {
-      const earnedXP = currentQuestion.xp;
+      earnedXP = currentQuestion.xp;
       setXpEarned(earnedXP);
       setTotalXp(prev => prev + earnedXP);
+    }
+
+    // Save progress to backend
+    try {
+      await progressAPI.update(user.id, {
+        courseId,
+        unitId: currentUnit.unitId,
+        screenId: currentScreen.screenId,
+        completed: true,
+        xpEarned: earnedXP
+      });
+      console.log('XP saved successfully');
+    } catch (error) {
+      console.error('Failed to save XP:', error);
+      // Optionally show error to user
     }
   };
 

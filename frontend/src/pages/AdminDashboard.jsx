@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from '../context/AuthContext';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { Users, BookOpen, Target, BarChart3, Eye, Trash2, LogOut, User, Mail, Calendar, Shield, Activity } from 'lucide-react';
+import { Users, BookOpen, Target, Eye, Trash2, LogOut, Mail, Calendar, Shield, Activity, Upload, FileText, CheckCircle, Clock } from 'lucide-react';
+import { documentAPI, adminAPI } from '../services/api';
 
 export default function AdminDashboard() {
-    const [stats, setStats] = useState({ 
-        users: { total: 0, learners: 0, admins: 0 }, 
+    const [stats, setStats] = useState({
+        users: { total: 0, learners: 0, admins: 0 },
         courses: 0
     });
     const [users, setUsers] = useState([]);
@@ -24,30 +25,15 @@ export default function AdminDashboard() {
         setLoading(true);
         setError("");
         try {
-            const token = localStorage.getItem('token');
-            const headers = {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            };
-
             const [statsRes, usersRes, coursesRes] = await Promise.all([
-                fetch("/api/admin/stats", { headers }).then(res => {
-                    if (!res.ok) throw new Error(`Stats: ${res.status}`);
-                    return res.json();
-                }),
-                fetch("/api/admin/users?limit=8", { headers }).then(res => {
-                    if (!res.ok) throw new Error(`Users: ${res.status}`);
-                    return res.json();
-                }),
-                fetch("/api/admin/courses", { headers }).then(res => {
-                    if (!res.ok) throw new Error(`Courses: ${res.status}`);
-                    return res.json();
-                })
+                adminAPI.getStats(),
+                adminAPI.getUsers(8),
+                adminAPI.getCourses()
             ]);
 
-            setStats(statsRes);
-            setUsers(usersRes);
-            setCourses(coursesRes);
+            setStats(statsRes.data);
+            setUsers(usersRes.data);
+            setCourses(coursesRes.data);
         } catch (err) {
             console.error('Admin API Error:', err);
             setError("Failed to load admin data. Please check if admin routes are implemented.");
@@ -59,51 +45,27 @@ export default function AdminDashboard() {
     // View User Details - Admin Perspective
     const handleViewUser = async (userId) => {
         try {
-            const token = localStorage.getItem('token');
-            const response = await fetch(`/api/admin/users/${userId}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch user details');
-            }
-
-            const userDetails = await response.json();
-            setSelectedUser(userDetails);
+            const response = await adminAPI.getUserDetails(userId); // You need to add this to adminAPI
+            setSelectedUser(response.data);
             setShowUserModal(true);
         } catch (err) {
             console.error('View user error:', err);
-            alert(`Failed to load user details: ${err.message}`);
+            alert(`Failed to load user details: ${err.response?.data?.message || err.message}`);
         }
     };
 
     // Delete User Function
     const handleDeleteUser = async (userId, username) => {
-        if (!window.confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
+        if (!window.confirm(`Are you sure you want to delete user "${username}"?`)) {
             return;
         }
 
         try {
-            const token = localStorage.getItem('token');
-            const response = await fetch(`/api/admin/users/${userId}`, {
-                method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
+            await adminAPI.deleteUser(userId);
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Failed to delete user');
-            }
-
-            // Remove user from local state
+            // Update local state
             setUsers(prevUsers => prevUsers.filter(user => user._id !== userId));
-            
+
             // Update stats
             setStats(prevStats => ({
                 ...prevStats,
@@ -115,11 +77,10 @@ export default function AdminDashboard() {
                 }
             }));
 
-            alert(`User "${username}" has been deleted successfully.`);
-
+            alert(`User "${username}" deleted successfully.`);
         } catch (err) {
             console.error('Delete user error:', err);
-            alert(`Failed to delete user: ${err.message}`);
+            alert(`Failed to delete user: ${err.response?.data?.message || err.message}`);
         }
     };
 
@@ -142,6 +103,116 @@ export default function AdminDashboard() {
         );
     }
 
+    const DocumentUploadSection = () => {
+        const [file, setFile] = useState(null);
+        const [uploading, setUploading] = useState(false);
+        const [documents, setDocuments] = useState([]);
+        const [showUpload, setShowUpload] = useState(false);
+
+        useEffect(() => {
+            loadDocuments();
+        }, []);
+
+        const handleFileChange = (e) => {
+            setFile(e.target.files[0]);
+        };
+
+        const loadDocuments = async () => {
+            try {
+                const response = await documentAPI.getAll();
+                setDocuments(response.data);
+                console.log('Documents loaded:', response.data);
+            } catch (error) {
+                console.error('Failed to load documents:', error.response?.data || error.message);
+            }
+        };
+
+        const handleUpload = async () => {
+            if (!file) return;
+
+            setUploading(true);
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await documentAPI.upload(formData);
+                alert('Document uploaded successfully!');
+                setFile(null);
+                setShowUpload(false);
+                await loadDocuments(); // Refresh the list
+            } catch (error) {
+                console.error('Upload error:', error.response?.data || error.message);
+                alert('Upload failed: ' + (error.response?.data?.message || 'Unknown error'));
+            } finally {
+                setUploading(false);
+            }
+        };
+
+        return (
+            <div className="card mb-8">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-gray-900">Course Source Documents</h3>
+                    <button
+                        onClick={() => setShowUpload(!showUpload)}
+                        className="btn-primary flex items-center"
+                    >
+                        <Upload className="w-4 h-4 mr-2" />
+                        Upload Document
+                    </button>
+                </div>
+
+                {showUpload && (
+                    <div className="mb-6 p-4 border-2 border-dashed border-gray-300 rounded-lg">
+                        <input
+                            type="file"
+                            onChange={handleFileChange}
+                            accept=".pdf,.docx,.txt"
+                            className="mb-4"
+                        />
+                        <button
+                            onClick={handleUpload}
+                            disabled={!file || uploading}
+                            className="btn-primary"
+                        >
+                            {uploading ? 'Uploading...' : 'Upload'}
+                        </button>
+                    </div>
+                )}
+
+                <div className="space-y-2">
+                    {documents.length === 0 ? (
+                        <p className="text-gray-500 text-center py-4">No documents uploaded yet</p>
+                    ) : (
+                        documents.map(doc => (
+                            <div key={doc._id} className="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                <div className="flex items-center">
+                                    <FileText className="w-5 h-5 text-blue-600 mr-3" />
+                                    <div>
+                                        <p className="font-medium">{doc.originalName}</p>
+                                        <p className="text-sm text-gray-500">
+                                            {new Date(doc.createdAt).toLocaleDateString()}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center">
+                                    {doc.embeddingStatus === 'completed' ? (
+                                        <CheckCircle className="w-5 h-5 text-green-500" />
+                                    ) : doc.embeddingStatus === 'processing' ? (
+                                        <Clock className="w-5 h-5 text-yellow-500 animate-spin" />
+                                    ) : (
+                                        <span className="text-sm bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+                                            Pending
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div className="min-h-screen bg-gray-50 py-8">
             <div className="max-w-7xl mx-auto px-4">
@@ -155,7 +226,7 @@ export default function AdminDashboard() {
                         <button onClick={loadAdminData} className="btn-secondary">
                             Refresh Data
                         </button>
-                        <button 
+                        <button
                             onClick={handleLogout}
                             className="bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 flex items-center"
                         >
@@ -164,6 +235,8 @@ export default function AdminDashboard() {
                         </button>
                     </div>
                 </div>
+
+                <DocumentUploadSection />
 
                 {loading ? (
                     <div className="flex justify-center py-12">
@@ -243,11 +316,10 @@ export default function AdminDashboard() {
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap">
-                                                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                                                            userItem.role === 'admin' 
-                                                                ? 'bg-purple-100 text-purple-800'
-                                                                : 'bg-green-100 text-green-800'
-                                                        }`}>
+                                                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${userItem.role === 'admin'
+                                                            ? 'bg-purple-100 text-purple-800'
+                                                            : 'bg-green-100 text-green-800'
+                                                            }`}>
                                                             {userItem.role}
                                                         </span>
                                                     </td>
@@ -256,11 +328,10 @@ export default function AdminDashboard() {
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap">
                                                         {userItem.role === 'learner' ? (
-                                                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                                                                userItem.completedCourses?.length > 0 
-                                                                    ? 'bg-green-100 text-green-800'
-                                                                    : 'bg-blue-100 text-blue-800'
-                                                            }`}>
+                                                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${userItem.completedCourses?.length > 0
+                                                                ? 'bg-green-100 text-green-800'
+                                                                : 'bg-blue-100 text-blue-800'
+                                                                }`}>
                                                                 {userItem.completedCourses?.length > 0 ? 'Active Learner' : 'New Learner'}
                                                             </span>
                                                         ) : (
@@ -270,14 +341,14 @@ export default function AdminDashboard() {
                                                         )}
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                                        <button 
+                                                        <button
                                                             onClick={() => handleViewUser(userItem._id)}
                                                             className="text-blue-600 hover:text-blue-900 mr-3 flex items-center"
                                                         >
                                                             <Eye className="w-4 h-4 mr-1" />
                                                             View
                                                         </button>
-                                                        <button 
+                                                        <button
                                                             onClick={() => handleDeleteUser(userItem._id, userItem.username)}
                                                             className="text-red-600 hover:text-red-900 flex items-center"
                                                             disabled={userItem._id === user?._id}
@@ -303,13 +374,12 @@ export default function AdminDashboard() {
                                         <h4 className="font-semibold text-gray-900 mb-2">{course.title}</h4>
                                         <div className="flex justify-between text-sm text-gray-600 mb-3">
                                             <span>{course.category}</span>
-                                            <span className={`px-2 py-1 text-xs rounded-full ${
-                                                course.difficulty === 'Beginner' 
-                                                    ? 'bg-green-100 text-green-800'
-                                                    : course.difficulty === 'Intermediate'
+                                            <span className={`px-2 py-1 text-xs rounded-full ${course.difficulty === 'Beginner'
+                                                ? 'bg-green-100 text-green-800'
+                                                : course.difficulty === 'Intermediate'
                                                     ? 'bg-yellow-100 text-yellow-800'
                                                     : 'bg-red-100 text-red-800'
-                                            }`}>
+                                                }`}>
                                                 {course.difficulty}
                                             </span>
                                         </div>
@@ -341,23 +411,21 @@ export default function AdminDashboard() {
                             <div className="p-6">
                                 <div className="flex justify-between items-center mb-6">
                                     <h3 className="text-2xl font-bold text-gray-900">User Management</h3>
-                                    <button 
+                                    <button
                                         onClick={() => setShowUserModal(false)}
                                         className="text-gray-400 hover:text-gray-600"
                                     >
                                         ✕
                                     </button>
                                 </div>
-                                
+
                                 <div className="space-y-6">
                                     {/* Basic Info */}
                                     <div className="flex items-center space-x-4">
-                                        <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                                            selectedUser.role === 'admin' ? 'bg-purple-100' : 'bg-blue-100'
-                                        }`}>
-                                            <Shield className={`w-8 h-8 ${
-                                                selectedUser.role === 'admin' ? 'text-purple-600' : 'text-blue-600'
-                                            }`} />
+                                        <div className={`w-16 h-16 rounded-full flex items-center justify-center ${selectedUser.role === 'admin' ? 'bg-purple-100' : 'bg-blue-100'
+                                            }`}>
+                                            <Shield className={`w-8 h-8 ${selectedUser.role === 'admin' ? 'text-purple-600' : 'text-blue-600'
+                                                }`} />
                                         </div>
                                         <div>
                                             <h4 className="text-xl font-semibold text-gray-900">{selectedUser.username}</h4>
@@ -380,7 +448,7 @@ export default function AdminDashboard() {
                                         </div>
                                         <div className="text-center p-4 bg-gray-50 rounded-lg">
                                             <p className="text-lg font-bold text-gray-900">
-                                                {selectedUser.role === 'learner' 
+                                                {selectedUser.role === 'learner'
                                                     ? (selectedUser.completedCourses?.length > 0 ? 'Active' : 'New')
                                                     : 'Administrator'
                                                 }
@@ -436,7 +504,7 @@ export default function AdminDashboard() {
                                     </div>
 
                                     <div className="flex justify-end space-x-3 pt-4">
-                                        <button 
+                                        <button
                                             onClick={() => setShowUserModal(false)}
                                             className="btn-secondary"
                                         >

@@ -13,6 +13,12 @@ router.post('/:userId', protect, async (req, res) => {
     }
     const { courseId, unitId, screenId, completed, xpEarned } = req.body;
 
+    if (xpEarned && (xpEarned < 0 || xpEarned > 100)) {
+      return res.status(400).json({ 
+        message: 'XP must be between 0 and 100' 
+      });
+    }
+
     const user = await User.findById(req.params.userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -22,7 +28,7 @@ router.post('/:userId', protect, async (req, res) => {
     if (xpEarned && xpEarned > 0) {
       // Validate XP is reasonable (prevent cheating)
       if (xpEarned <= 100) { // Set reasonable max per update
-        user.xp += xpEarned;
+        user.xp += xpEarned; // update XP
       }
     }
 

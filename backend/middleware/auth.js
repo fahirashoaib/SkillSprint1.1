@@ -9,15 +9,10 @@ export const protect = async (req, res, next) => {
     }
 
     if (!token) {
-      return res.status(401).json({ message: 'Not authorized, no token' });
+      return res.status(401).json({ message: 'Please log in to access this resource' });
     }
-
+    //jwt.verify will throw an error if token is expired
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
-    // Check if token is expired
-    if (decoded.exp && Date.now() >= decoded.exp * 1000) {
-      return res.status(401).json({ message: 'Token expired' });
-    }
 
     req.user = await User.findById(decoded.id).select('-password');
     
@@ -28,14 +23,15 @@ export const protect = async (req, res, next) => {
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Token expired' });
+      return res.status(401).json({ message: 'Your session has expired. Please log in again' });
     }
     if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ message: 'Invalid token' });
+      return res.status(401).json({ message: 'Invalid token. Please log in again' });
     }
-    res.status(401).json({ message: 'Not authorized, token failed' });
+    res.status(401).json({ message: 'Authentication failed' });
   }
 };
+
 export const admin = (req, res, next) => {
   if (req.user && req.user.role === 'admin') {
     next();

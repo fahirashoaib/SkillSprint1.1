@@ -1,0 +1,29 @@
+# Introduction to Python Programming
+
+Python is a powerful, easy-to-learn programming language. It has efficient high-level data structures and a simple but effective approach to object-oriented programming. Python's elegant syntax and dynamic typing make it an ideal language for scripting and rapid application development.
+
+## Why Learn Python?
+
+Python is one of the most popular programming languages today. It's used in:
+- Web Development (Django, Flask)
+- Data Science and Machine Learning
+- Artificial Intelligence
+- Automation and Scripting
+- Software Testing
+- Scientific Computing
+
+## Python Basics
+
+### Variables and Data Types
+Python has several basic data types:
+- Integers: whole numbers like 5, 10, 100
+- Floats: decimal numbers like 3.14, 2.5
+- Strings: text like "Hello, World!"
+- Booleans: True or False
+
+Example:
+```python
+name = "John"
+age = 25
+height = 5.9
+is_student = True

@@ -23,7 +23,7 @@ const Dashboard = () => {
         { name: 'Home', href: '/', icon: Home },
         { name: 'Courses', href: '/courses', icon: BookOpen },
         { name: 'Achievements', href: '/achievements', icon: Trophy },
-        //{ name: 'Profile', href: '/profile', icon: User }
+        { name: 'Profile', href: '/profile', icon: User }
       ];
     }
   };
@@ -58,34 +58,6 @@ const Dashboard = () => {
             </span>
           </div>
 
-          {/* User Info 
-          <div className="px-4 mt-6 pb-4 border-b">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                <User className="w-6 h-6 text-blue-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">
-                  {user?.username}
-                </p>
-                <p className="text-xs text-gray-500 truncate">
-                  {isAdmin() ? 'Administrator' : `Learner • ${user?.xp || 0} XP`}
-                </p>
-              </div>
-            </div>
-            
-             Only show Profile link for learners
-            {!isAdmin() && (
-              <div className="mt-3 flex items-center justify-between text-sm">
-                <span className="text-gray-600">XP: {user?.xp || 0}</span>
-                <Link to="/profile" className="text-blue-600 hover:text-blue-700">
-                  Profile
-                </Link>
-              </div>
-            )}
-          </div> */}
-
-
           <div className="mt-6 flex-grow flex flex-col">
             <nav className="flex-1 px-4 pb-4 space-y-2">
               {navigation.map((item) => (
@@ -117,80 +89,6 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
-
-      {/* Mobile sidebar */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 flex z-40 md:hidden">
-          <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSidebarOpen(false)}></div>
-          <div className="relative flex-1 flex flex-col max-w-xs w-full bg-white">
-            <div className="absolute top-0 right-0 -mr-12 pt-2">
-              <button
-                className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
-                onClick={() => setSidebarOpen(false)}
-              >
-                <X className="h-6 w-6 text-white" />
-              </button>
-            </div>
-            <div className="flex-1 h-0 pt-5 pb-4 overflow-y-auto">
-              <div className="flex-shrink-0 flex items-center px-4 mb-6">
-                <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">SS</span>
-                </div>
-                <span className="ml-2 text-xl font-bold text-gray-900">
-                  {isAdmin() ? 'Admin Portal' : 'SkillSprint'}
-                </span>
-              </div>
-
-              {/* Mobile User Info */}
-              <div className="px-4 pb-4 border-b mb-4">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                    <User className="w-6 h-6 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{user?.username}</p>
-                    <p className="text-xs text-gray-500">
-                      {isAdmin() ? 'Administrator' : `${user?.xp || 0} XP`}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <nav className="px-4 space-y-2">
-                {navigation.map((item) => (
-                  <Link
-                    key={item.name}
-                    to={item.href}
-                    onClick={() => setSidebarOpen(false)}
-                    className={`group flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
-                      isActive(item.href)
-                        ? 'bg-blue-50 text-blue-700'
-                        : 'text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    <item.icon className="w-5 h-5 mr-3" />
-                    {item.name}
-                  </Link>
-                ))}
-              </nav>
-
-              {/* Mobile Logout */}
-              <div className="px-4 mt-4 pt-4 border-t">
-                <button
-                  onClick={() => {
-                    setSidebarOpen(false);
-                    handleLogout();
-                  }}
-                  className="w-full flex items-center px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg"
-                >
-                  <LogOut className="w-5 h-5 mr-3" />
-                  Logout
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Main content */}
       <div className="flex flex-col flex-1 overflow-hidden">
@@ -230,16 +128,6 @@ const Dashboard = () => {
 
                 {showUserMenu && (
                   <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border py-1">
-                    {/* Only show Profile for learners */}
-                    {/* {!isAdmin() && (
-                      <Link
-                        to="/profile"
-                        className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                        onClick={() => setShowUserMenu(false)}
-                      >
-                        Profile
-                      </Link>
-                    )} */}
                     <button
                       onClick={handleLogout}
                       className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"

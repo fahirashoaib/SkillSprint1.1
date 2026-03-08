@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate,useParams, Link } from 'react-router-dom';
+import {useParams, Link } from 'react-router-dom';
 import { courseAPI } from '../services/api';
-import LoadingSpinner from '../components/LoadingSpinner';
-import { ArrowLeft } from 'lucide-react';
+import { LoadingPage } from '../components/LoadingSpinner';
+import BackButton from '../components/BackButton';
+import DifficultyBadge from '../components/DifficultyBadge';
+import ProgressBar from '../components/ProgressBar';
 
 const CourseDetail = () => {
   const { id } = useParams();
-  const navigate = useNavigate(); 
   const [course, setCourse] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -25,13 +26,7 @@ const CourseDetail = () => {
     fetchCourse();
   }, [id]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingPage />;
 
   if (!course) {
     return (
@@ -47,16 +42,8 @@ const CourseDetail = () => {
   
   return (
     <div className="min-h-screen bg-gray-50 py-8">
-      {/* Back to Courses Button */}
-      <div className="mb-4 pb-4 border-b border-gray-200">
-        <button
-          onClick={() => navigate(`/courses`)}
-          className="flex items-center text-gray-600 hover:text-gray-900 transition-colors text-sm font-medium"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Courses
-        </button>
-      </div>
+      <BackButton to="/courses" text="Back to Courses" />
+      
       <div className="max-w-4xl mx-auto px-4">
         {/* Course Hero */}
         <div className="card mb-8">
@@ -65,9 +52,7 @@ const CourseDetail = () => {
             <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
               {course.category}
             </span>
-            <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">
-              {course.difficulty}
-            </span>
+            <DifficultyBadge level={course.difficulty} />
             <span className="bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-sm font-medium">
               ⏱️ {course.totalDuration} min
             </span>

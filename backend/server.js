@@ -7,6 +7,7 @@ import adminRoutes from './routes/admin.js';
 import courseRoutes from './routes/courses.js';
 import userRoutes from './routes/users.js';
 import progressRoutes from './routes/progress.js';
+import uploadRoutes from './routes/upload.js';
 
 const app = express();
 dotenv.config();
@@ -23,6 +24,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // Environment Variable Checks
 if (!process.env.JWT_SECRET || !process.env.JWT_EXPIRES_IN) {
@@ -42,6 +44,22 @@ const PORT = process.env.PORT;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+
+// Add this at the bottom of server.js
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION! Shutting down...');
+  console.error(err.name, err.message);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('UNHANDLED REJECTION! Shutting down...');
+  console.error(err.name, err.message);
+  app.close(() => {
+    process.exit(1);
+  });
+});
+
 // # Run this in your terminal to generate a random secret
 //node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 

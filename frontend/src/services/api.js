@@ -40,7 +40,18 @@ export const adminAPI = {
   getStats: () => api.get('/admin/stats'),
   getUsers: (limit = 10) => api.get(`/admin/users?limit=${limit}`),
   getCourses: () => api.get('/admin/courses'),
+  getUserDetails: (id) => api.get(`/admin/users/${id}`),
   deleteUser: (id) => api.delete(`/admin/users/${id}`)
 };
+
+// Document Upload APIs
+export const documentAPI = {
+  upload: (formData) => api.post('/upload/document', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  getAll: () => api.get('/upload/documents'),
+  process: (id) => api.post(`/upload/document/${id}/process`)
+};
+
 
 export default api;
