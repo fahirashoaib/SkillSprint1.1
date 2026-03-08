@@ -43,7 +43,24 @@ const courseSchema = new mongoose.Schema({
   totalDuration: Number,
   totalXP: Number,
   learningObjectives: [String],
-  units: [unitSchema]
+  units: [unitSchema],
+  status: {
+    type: String,
+    enum: ['draft', 'published', 'archived'],
+    default: 'published' // Keep existing courses as published
+  },
+  generatedFrom: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'DocumentUpload'
+  },
+  generatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  aiGenerated: {
+    type: Boolean,
+    default: false
+  }
 }, {
   timestamps: true
 });

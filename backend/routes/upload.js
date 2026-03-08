@@ -2,8 +2,7 @@ import express from 'express';
 import multer from 'multer'; // For handling file uploads
 import { protect, admin } from '../middleware/auth.js';
 import DocumentUpload from '../models/DocumentUpload.js';
-import { extractText, chunkText } from '../services/documentProcessor.js';
-import DocumentChunk from '../models/DocumentChunk.js';
+import { extractText} from '../services/documentProcessor.js';
 
 
 const router = express.Router();

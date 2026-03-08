@@ -8,6 +8,7 @@ import courseRoutes from './routes/courses.js';
 import userRoutes from './routes/users.js';
 import progressRoutes from './routes/progress.js';
 import uploadRoutes from './routes/upload.js';
+import aiGenerationRoutes from './routes/aiGeneration.js';
 
 const app = express();
 dotenv.config();
@@ -25,6 +26,7 @@ app.use('/api/courses', courseRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/ai', aiGenerationRoutes);
 
 // Environment Variable Checks
 if (!process.env.JWT_SECRET || !process.env.JWT_EXPIRES_IN) {
