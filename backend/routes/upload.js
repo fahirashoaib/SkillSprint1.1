@@ -1,13 +1,12 @@
 import express from 'express';
-import multer from 'multer'; // For handling file uploads
+import multer from 'multer';
 import { protect, admin } from '../middleware/auth.js';
 import DocumentUpload from '../models/DocumentUpload.js';
 import { extractText} from '../services/documentProcessor.js';
-
+import fs from 'fs';
 
 const router = express.Router();
 
-// Configure multer for file upload
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, 'uploads/');
@@ -19,7 +18,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage,
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+    limits: { fileSize: 10 * 1024 * 1024 }
 });
 
 const getFileType = (mimetype) => {
@@ -28,9 +27,7 @@ const getFileType = (mimetype) => {
         'application/pdf': 'pdf',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
         'text/markdown': 'md',
-        'application/msword': 'docx',
     };
-
     return mimeMap[mimetype] || mimetype.split('/')[1];
 };
 
@@ -38,14 +35,12 @@ const getFileType = (mimetype) => {
 router.post('/document', protect, admin, upload.single('file'), async (req, res) => {
     try {
         const { originalname, filename, size, mimetype } = req.file;
-
-        // Map mime type to your allowed enum values
         const fileType = getFileType(mimetype);
-        // Save to database
+        
         const document = new DocumentUpload({
             filename,
             originalName: originalname,
-            fileType: fileType,  // Now it will be 'txt' instead of 'plain'
+            fileType,
             fileSize: size,
             filePath: req.file.path,
             uploadedBy: req.user._id,
@@ -69,51 +64,50 @@ router.post('/document', protect, admin, upload.single('file'), async (req, res)
     }
 });
 
-// Get all uploaded documents
+// Get all documents
 router.get('/documents', protect, admin, async (req, res) => {
     try {
-        console.log('Fetching documents for user:', req.user._id);
         const documents = await DocumentUpload.find()
             .sort({ createdAt: -1 })
             .select('-extractedText');
-
-        console.log('Found documents:', documents.length);
-        console.log('Documents data:', documents);
-
         res.json(documents);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 });
 
-
-// Process document after upload
+// Process document
 router.post('/document/:id/process', protect, admin, async (req, res) => {
+    let document;
     try {
-        const document = await DocumentUpload.findById(req.params.id);
+        document = await DocumentUpload.findById(req.params.id);
         if (!document) {
             return res.status(404).json({ message: 'Document not found' });
         }
 
-        // Update status
+        if (!fs.existsSync(document.filePath)) {
+            return res.status(404).json({ message: 'File not found on server' });
+        }
+
         document.embeddingStatus = 'processing';
         await document.save();
 
-        // Extract text
         const extractedText = await extractText(document.filePath, document.fileType);
+        
         document.extractedText = extractedText;
-
         document.embeddingStatus = 'completed';
         await document.save();
 
         res.json({
             message: 'Document processed successfully',
-            chunks: chunks.length
+            textLength: extractedText.length
         });
     } catch (error) {
         console.error('Processing error:', error);
-        document.embeddingStatus = 'failed';
-        await document.save();
+        if (document) {
+            document.embeddingStatus = 'failed';
+            await document.save();
+        }
         res.status(500).json({ message: error.message });
     }
 });

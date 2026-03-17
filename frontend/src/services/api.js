@@ -44,6 +44,21 @@ export const adminAPI = {
   deleteUser: (id) => api.delete(`/admin/users/${id}`)
 };
 
+// Add AI Generation APIs
+export const aiAPI = {
+  getDrafts: () => api.get('/ai/drafts').catch(error => {
+    // If 404, return empty array (endpoint not implemented yet)
+    if (error.response?.status === 404) {
+      return { data: [] };
+    }
+    throw error;
+  }),
+  getDraft: (courseId) => api.get(`/ai/drafts/${courseId}`),
+  updateDraft: (courseId, data) => api.put(`/ai/drafts/${courseId}`, data),
+  publishDraft: (courseId) => api.post(`/ai/publish/${courseId}`),
+  deleteDraft: (courseId) => api.delete(`/ai/drafts/${courseId}`)
+};
+
 // Document Upload APIs
 export const documentAPI = {
   upload: (formData) => api.post('/upload/document', formData, {

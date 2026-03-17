@@ -2,6 +2,8 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext'; // Import useAuth
 import ProtectedRoute from './components/ProtectedRoute';
+import CourseReview from './components/admin/CourseReview';
+import DraftsList from './components/admin/DraftsList';
 
 // Pages
 import Login from './pages/Login';
@@ -18,11 +20,11 @@ import AdminDashboard from './pages/AdminDashboard';
 // New component to block admin from learner routes
 const LearnerOnlyRoute = ({ children }) => {
   const { isAdmin } = useAuth(); // Now this will work
-  
+
   if (isAdmin()) {
     return <Navigate to="/admin" replace />;
   }
-  
+
   return children;
 };
 
@@ -74,6 +76,23 @@ function App() {
             <Route path="/admin" element={
               <ProtectedRoute requireAdmin={true}>
                 <AdminDashboard />
+              </ProtectedRoute>
+            } />
+
+            <Route path="/admin/documents" element={
+              <ProtectedRoute requireAdmin={true}>
+                <AdminDashboard />
+              </ProtectedRoute>
+            } />
+            <Route path="/admin/drafts" element={
+              <ProtectedRoute requireAdmin={true}>
+                <DraftsList />
+              </ProtectedRoute>
+            } />
+
+            <Route path="/admin/review-course/:courseId" element={
+              <ProtectedRoute requireAdmin={true}>
+                <CourseReview />
               </ProtectedRoute>
             } />
 

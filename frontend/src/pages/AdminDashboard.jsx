@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from '../context/AuthContext';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { Users, BookOpen, Target, Eye, Trash2, LogOut, Mail, Calendar, Shield, Activity, Upload, FileText, CheckCircle, Clock } from 'lucide-react';
-import { documentAPI, adminAPI } from '../services/api';
+import { Users, BookOpen, Target, Eye, Trash2, LogOut, Mail, Calendar, Shield, Activity} from 'lucide-react';
+import {adminAPI } from '../services/api';
+import DocumentsList from '../components/admin/DocumentsList';
 
 export default function AdminDashboard() {
     const [stats, setStats] = useState({
@@ -16,6 +17,7 @@ export default function AdminDashboard() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const { user, logout } = useAuth();
+    const [draftCount, setDraftCount] = useState(0);
 
     useEffect(() => {
         loadAdminData();
@@ -103,116 +105,6 @@ export default function AdminDashboard() {
         );
     }
 
-    const DocumentUploadSection = () => {
-        const [file, setFile] = useState(null);
-        const [uploading, setUploading] = useState(false);
-        const [documents, setDocuments] = useState([]);
-        const [showUpload, setShowUpload] = useState(false);
-
-        useEffect(() => {
-            loadDocuments();
-        }, []);
-
-        const handleFileChange = (e) => {
-            setFile(e.target.files[0]);
-        };
-
-        const loadDocuments = async () => {
-            try {
-                const response = await documentAPI.getAll();
-                setDocuments(response.data);
-                console.log('Documents loaded:', response.data);
-            } catch (error) {
-                console.error('Failed to load documents:', error.response?.data || error.message);
-            }
-        };
-
-        const handleUpload = async () => {
-            if (!file) return;
-
-            setUploading(true);
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                const response = await documentAPI.upload(formData);
-                alert('Document uploaded successfully!');
-                setFile(null);
-                setShowUpload(false);
-                await loadDocuments(); // Refresh the list
-            } catch (error) {
-                console.error('Upload error:', error.response?.data || error.message);
-                alert('Upload failed: ' + (error.response?.data?.message || 'Unknown error'));
-            } finally {
-                setUploading(false);
-            }
-        };
-
-        return (
-            <div className="card mb-8">
-                <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-xl font-bold text-gray-900">Course Source Documents</h3>
-                    <button
-                        onClick={() => setShowUpload(!showUpload)}
-                        className="btn-primary flex items-center"
-                    >
-                        <Upload className="w-4 h-4 mr-2" />
-                        Upload Document
-                    </button>
-                </div>
-
-                {showUpload && (
-                    <div className="mb-6 p-4 border-2 border-dashed border-gray-300 rounded-lg">
-                        <input
-                            type="file"
-                            onChange={handleFileChange}
-                            accept=".pdf,.docx,.txt"
-                            className="mb-4"
-                        />
-                        <button
-                            onClick={handleUpload}
-                            disabled={!file || uploading}
-                            className="btn-primary"
-                        >
-                            {uploading ? 'Uploading...' : 'Upload'}
-                        </button>
-                    </div>
-                )}
-
-                <div className="space-y-2">
-                    {documents.length === 0 ? (
-                        <p className="text-gray-500 text-center py-4">No documents uploaded yet</p>
-                    ) : (
-                        documents.map(doc => (
-                            <div key={doc._id} className="flex items-center justify-between p-3 bg-gray-50 rounded">
-                                <div className="flex items-center">
-                                    <FileText className="w-5 h-5 text-blue-600 mr-3" />
-                                    <div>
-                                        <p className="font-medium">{doc.originalName}</p>
-                                        <p className="text-sm text-gray-500">
-                                            {new Date(doc.createdAt).toLocaleDateString()}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="flex items-center">
-                                    {doc.embeddingStatus === 'completed' ? (
-                                        <CheckCircle className="w-5 h-5 text-green-500" />
-                                    ) : doc.embeddingStatus === 'processing' ? (
-                                        <Clock className="w-5 h-5 text-yellow-500 animate-spin" />
-                                    ) : (
-                                        <span className="text-sm bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
-                                            Pending
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                        ))
-                    )}
-                </div>
-            </div>
-        );
-    };
-
     return (
         <div className="min-h-screen bg-gray-50 py-8">
             <div className="max-w-7xl mx-auto px-4">
@@ -236,8 +128,6 @@ export default function AdminDashboard() {
                     </div>
                 </div>
 
-                <DocumentUploadSection />
-
                 {loading ? (
                     <div className="flex justify-center py-12">
                         <LoadingSpinner size="lg" />
@@ -250,6 +140,8 @@ export default function AdminDashboard() {
                     </div>
                 ) : (
                     <>
+                        {/* Documents List */}
+                        <DocumentsList />
                         {/* Stats Overview - ADMIN ONLY METRICS */}
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                             <div className="card text-center">
@@ -282,6 +174,24 @@ export default function AdminDashboard() {
                                 <p className="text-3xl font-bold text-orange-600">
                                     {courses.reduce((sum, course) => sum + (course.inProgress || 0), 0)}
                                 </p>
+                            </div>
+                        </div>
+
+                        {/* Drafts Overview */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                            <div
+                                className="card cursor-pointer hover:shadow-lg transition-shadow"
+                                onClick={() => window.location.href = '/admin/drafts'}
+                            >
+                                <h3 className="text-lg font-semibold text-gray-900 mb-4">AI Generated Drafts</h3>
+                                <p className="text-2xl font-bold text-purple-600 mb-2">
+                                    {/* You'll need to fetch this count - add to your loadAdminData */}
+                                    {draftCount || 0}
+                                </p>
+                                <p className="text-sm text-gray-600">Courses awaiting review</p>
+                                <button className="mt-4 text-purple-600 hover:text-purple-700 text-sm font-medium">
+                                    View All Drafts →
+                                </button>
                             </div>
                         </div>
 
