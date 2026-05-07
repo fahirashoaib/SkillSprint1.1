@@ -44,6 +44,52 @@ const courseSchema = new mongoose.Schema({
   totalXP: Number,
   learningObjectives: [String],
   units: [unitSchema],
+  prerequisites: {
+    enabled: {
+      type: Boolean,
+      default: false
+    },
+    linkType: {
+      type: String,
+      enum: ['soft', 'hard'],
+      default: 'soft'
+    },
+    requirements: [{
+      type: {
+        type: String,
+        enum: ['course', 'unit', 'xp', 'document', 'test'],
+        required: true
+      },
+      courseId: {// For course completion
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Course'
+      },
+      unitId: String,// For unit completion
+      unitTitle: String,
+      minXp: Number,// For XP threshold
+      documentIds: [{// For document study
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'DocumentUpload'
+      }],
+      testId: {// For placement test
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Test'
+      },
+      passingScore: {
+        type: Number,
+        default: 80
+      }
+    }],
+    requirementMode: {
+      type: String,
+      enum: ['any', 'all'],
+      default: 'all'
+    },
+    allowBypassTest: {
+      type: Boolean,
+      default: false
+    }
+  },
   status: {
     type: String,
     enum: ['draft', 'published', 'archived'],

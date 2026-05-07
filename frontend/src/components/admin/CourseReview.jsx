@@ -3,9 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { aiAPI } from '../../services/api';
 import LoadingSpinner from '../LoadingSpinner';
 import BackButton from '../BackButton';
-import { 
-  Sparkles, Save, CheckCircle, XCircle, Edit2, FileText, 
-  ChevronDown, ChevronUp, AlertCircle, Trophy, Clock, BookOpen, 
+import {
+  Sparkles, Save, CheckCircle, XCircle, Edit2, FileText,
+  ChevronDown, ChevronUp, AlertCircle, Trophy, Clock, BookOpen,
   Plus, Trash2, Star, Target, Award, Zap, Brain, Shield,
   TrendingUp, Users, Eye, MessageSquare, Copy, RefreshCw,
   Layers, Monitor, HelpCircle, Code
@@ -32,9 +32,33 @@ const CourseReview = () => {
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState('');
 
+  const [allCourses, setAllCourses] = useState([]);
+
   useEffect(() => {
     loadDraft();
   }, [courseId]);
+
+  // Fetch all courses for prerequisite selection
+  const fetchAllCourses = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:5000/api/courses', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      // Filter out the current course
+      const filtered = data.filter(c => c._id !== courseId);
+      setAllCourses(filtered);
+    } catch (error) {
+      console.error('Failed to fetch courses:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (course) {
+      fetchAllCourses();
+    }
+  }, [course]);
 
   useEffect(() => {
     const handleBeforeUnload = (e) => {
@@ -53,7 +77,7 @@ const CourseReview = () => {
       const response = await aiAPI.getReviewCourse(courseId);
       setCourse(response.data);
       setOriginalCourse(JSON.parse(JSON.stringify(response.data)));
-      
+
       const expanded = {};
       response.data.units?.forEach((_, index) => {
         expanded[index] = true;
@@ -87,7 +111,7 @@ const CourseReview = () => {
     const errors = {};
     if (!course.title?.trim()) errors.title = 'Course title is required';
     if (!course.learningObjectives?.length) errors.learningObjectives = 'At least one learning objective is required';
-    
+
     course.units?.forEach((unit, uIdx) => {
       if (!unit.title?.trim()) errors[`units.${uIdx}.title`] = 'Unit title is required';
       unit.screens?.forEach((screen, sIdx) => {
@@ -129,7 +153,7 @@ const CourseReview = () => {
       return;
     }
     if (!window.confirm('Publish this course? It will be visible to all learners.')) return;
-    
+
     setSaving(true);
     try {
       await aiAPI.publishDraft(courseId);
@@ -168,7 +192,7 @@ const CourseReview = () => {
       alert('Please provide feedback or use the suggestion');
       return;
     }
-    
+
     setFeedbackLoading(true);
     try {
       const token = localStorage.getItem('token');
@@ -191,7 +215,7 @@ const CourseReview = () => {
           }
         })
       });
-      
+
       const result = await response.json();
       if (result.result) {
         // Apply the improvement based on field type
@@ -289,11 +313,125 @@ const CourseReview = () => {
   };
 
   const getScreenIcon = (type) => {
-    switch(type) {
+    switch (type) {
       case 'concept-check': return <HelpCircle className="w-4 h-4" />;
       case 'coding': return <Code className="w-4 h-4" />;
       default: return <Monitor className="w-4 h-4" />;
     }
+  };
+
+  // Add a new requirement
+  const addRequirement = () => {
+    const newRequirement = {
+      type: 'course',
+      courseId: null,
+      unitId: '',
+      unitTitle: '',
+      minXp: 100,
+      documentIds: [],
+      passingScore: 80
+    };
+
+    const updatedCourse = { ...course };
+    if (!updatedCourse.prerequisites) {
+      updatedCourse.prerequisites = { enabled: true, requirements: [] };
+    }
+    if (!updatedCourse.prerequisites.requirements) {
+      updatedCourse.prerequisites.requirements = [];
+    }
+    updatedCourse.prerequisites.requirements.push(newRequirement);
+    setCourse(updatedCourse);
+    setUnsavedChanges(true);
+  };
+
+  // Update a requirement
+  const updateRequirement = (index, field, value) => {
+    const updatedCourse = { ...course };
+    updatedCourse.prerequisites.requirements[index][field] = value;
+    setCourse(updatedCourse);
+    setUnsavedChanges(true);
+  };
+
+  // Remove a requirement
+  const removeRequirement = (index) => {
+    const updatedCourse = { ...course };
+    updatedCourse.prerequisites.requirements.splice(index, 1);
+    setCourse(updatedCourse);
+    setUnsavedChanges(true);
+  };
+
+  // Requirement Row Component for Prerequisites
+  const RequirementRow = ({ requirement, index, onUpdate, onRemove, courses }) => {
+    return (
+      <div className="border rounded-lg p-4 bg-gray-50">
+        <div className="flex justify-between items-start mb-3">
+          <select
+            value={requirement.type}
+            onChange={(e) => onUpdate(index, 'type', e.target.value)}
+            className="input-field text-sm"
+          >
+            <option value="course">Course Completion</option>
+            <option value="xp">XP Threshold</option>
+            <option value="unit">Unit Completion</option>
+          </select>
+          <button
+            onClick={() => onRemove(index)}
+            className="text-red-500 hover:text-red-700"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+
+        {requirement.type === 'course' && (
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Required Course</label>
+            <select
+              value={requirement.courseId || ''}
+              onChange={(e) => onUpdate(index, 'courseId', e.target.value)}
+              className="input-field text-sm"
+            >
+              <option value="">Select a course</option>
+              {courses?.filter(c => c._id !== course?._id).map(c => (
+                <option key={c._id} value={c._id}>{c.title}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {requirement.type === 'xp' && (
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Minimum XP Required</label>
+            <input
+              type="number"
+              value={requirement.minXp || 100}
+              onChange={(e) => onUpdate(index, 'minXp', parseInt(e.target.value))}
+              className="input-field text-sm w-32"
+              min="0"
+            />
+          </div>
+        )}
+
+        {requirement.type === 'unit' && (
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Unit ID (from another course)</label>
+            <input
+              type="text"
+              value={requirement.unitId || ''}
+              onChange={(e) => onUpdate(index, 'unitId', e.target.value)}
+              className="input-field text-sm"
+              placeholder="e.g., unit1"
+            />
+            <input
+              type="text"
+              value={requirement.unitTitle || ''}
+              onChange={(e) => onUpdate(index, 'unitTitle', e.target.value)}
+              className="input-field text-sm mt-2"
+              placeholder="Unit Title (display only)"
+            />
+          </div>
+        )}
+      </div>
+    );
   };
 
   if (loading) {
@@ -412,15 +550,14 @@ const CourseReview = () => {
 
         {/* Tabs */}
         <div className="flex space-x-2 mb-6 border-b">
-          {['overview', 'units', 'analytics'].map(tab => (
+          {['overview', 'units', 'analytics', 'prerequisites'].map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-6 py-2 font-medium transition-colors ${
-                activeTab === tab 
-                  ? 'text-blue-600 border-b-2 border-blue-600' 
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
+              className={`px-6 py-2 font-medium transition-colors ${activeTab === tab
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-500 hover:text-gray-700'
+                }`}
             >
               {tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
@@ -677,7 +814,7 @@ const CourseReview = () => {
                           return (
                             <div key={sIdx} className="border-2 border-gray-200 rounded-lg overflow-hidden hover:border-purple-300 transition-colors">
                               {/* Screen Header */}
-                              <div 
+                              <div
                                 className="bg-gray-50 px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-gray-100"
                                 onClick={() => toggleScreen(uIdx, sIdx)}
                               >
@@ -695,9 +832,8 @@ const CourseReview = () => {
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                                  <span className={`px-2 py-1 text-xs rounded-full font-medium ${
-                                    screen.type === 'concept-check' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'
-                                  }`}>
+                                  <span className={`px-2 py-1 text-xs rounded-full font-medium ${screen.type === 'concept-check' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'
+                                    }`}>
                                     {screen.type === 'concept-check' ? '📝 Quiz' : '📖 Content'}
                                   </span>
                                   <button
@@ -1033,6 +1169,138 @@ const CourseReview = () => {
           </div>
         )}
 
+        {activeTab === 'prerequisites' && (
+          <div className="card">
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">Prerequisite Settings</h2>
+
+            {/* Enable Prerequisites Toggle */}
+            <div className="mb-6">
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={course.prerequisites?.enabled || false}
+                  onChange={(e) => handleFieldChange('prerequisites.enabled', e.target.checked)}
+                  className="w-4 h-4 text-blue-600"
+                />
+                <span className="font-medium text-gray-900">Enable Prerequisites</span>
+              </label>
+            </div>
+
+            {course.prerequisites?.enabled && (
+              <>
+                {/* Link Type Selection */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Link Type</label>
+                  <div className="space-x-4">
+                    <label className="inline-flex items-center">
+                      <input
+                        type="radio"
+                        value="soft"
+                        checked={course.prerequisites?.linkType === 'soft'}
+                        onChange={(e) => handleFieldChange('prerequisites.linkType', e.target.value)}
+                        className="mr-2"
+                      />
+                      <span>Soft (Warning only)</span>
+                    </label>
+                    <label className="inline-flex items-center">
+                      <input
+                        type="radio"
+                        value="hard"
+                        checked={course.prerequisites?.linkType === 'hard'}
+                        onChange={(e) => handleFieldChange('prerequisites.linkType', e.target.value)}
+                        className="mr-2"
+                      />
+                      <span>Hard (Block until requirements met)</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Requirements */}
+                <div className="mb-6">
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="block text-sm font-medium text-gray-700">Requirements</label>
+                    <button
+                      onClick={addRequirement}
+                      className="text-blue-600 text-sm flex items-center gap-1"
+                    >
+                      + Add Requirement
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {(course.prerequisites?.requirements || []).map((req, idx) => (
+                      <RequirementRow
+                        key={idx}
+                        requirement={req}
+                        index={idx}
+                        onUpdate={updateRequirement}
+                        onRemove={removeRequirement}
+                        courses={allCourses}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Requirement Mode */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Requirement Mode</label>
+                  <div className="space-x-4">
+                    <label className="inline-flex items-center">
+                      <input
+                        type="radio"
+                        value="all"
+                        checked={course.prerequisites?.requirementMode === 'all'}
+                        onChange={(e) => handleFieldChange('prerequisites.requirementMode', e.target.value)}
+                        className="mr-2"
+                      />
+                      <span>All requirements must be met</span>
+                    </label>
+                    <label className="inline-flex items-center">
+                      <input
+                        type="radio"
+                        value="any"
+                        checked={course.prerequisites?.requirementMode === 'any'}
+                        onChange={(e) => handleFieldChange('prerequisites.requirementMode', e.target.value)}
+                        className="mr-2"
+                      />
+                      <span>Any one requirement is enough</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Bypass Test */}
+                {course.prerequisites?.linkType === 'hard' && (
+                  <div className="mb-6">
+                    <label className="flex items-center space-x-3 mb-3">
+                      <input
+                        type="checkbox"
+                        checked={course.prerequisites?.allowBypassTest || false}
+                        onChange={(e) => handleFieldChange('prerequisites.allowBypassTest', e.target.checked)}
+                        className="w-4 h-4 text-blue-600"
+                      />
+                      <span className="font-medium text-gray-900">Allow placement test bypass</span>
+                    </label>
+
+                    {course.prerequisites?.allowBypassTest && (
+                      <div className="ml-6">
+                        <label className="block text-sm text-gray-600 mb-1">Passing Score (%)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={course.prerequisites?.bypassPassingScore || 80}
+                          onChange={(e) => handleFieldChange('prerequisites.bypassPassingScore', parseInt(e.target.value))}
+                          className="input-field w-32"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         {/* AI Feedback Modal */}
         {feedbackModalOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -1108,7 +1376,7 @@ const CourseReview = () => {
 
                 <div className="p-3 bg-yellow-50 rounded-lg">
                   <p className="text-xs text-yellow-800">
-                    💡 <span className="font-semibold">Pro Tip:</span> Be specific about what you want changed. 
+                    💡 <span className="font-semibold">Pro Tip:</span> Be specific about what you want changed.
                     The AI will preserve the core meaning while enhancing it based on your feedback.
                   </p>
                 </div>

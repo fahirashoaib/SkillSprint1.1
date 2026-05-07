@@ -24,6 +24,16 @@ const Learning = () => {
   const [courseXp, setCourseXp] = useState(0);
   const [completedScreensMap, setCompletedScreensMap] = useState({});
 
+  // Check if user can access a specific screen
+  const canAccessScreen = (screenIndex, unit) => {
+    // First screen is always accessible
+    if (screenIndex === 0) return true;
+
+    // Check if previous screen is completed
+    const previousScreen = unit.screens[screenIndex - 1];
+    return isScreenCompleted(previousScreen.screenId, unit.unitId);
+  };
+
   // Helper: Refresh completed screens and XP
   const refreshCompletedData = useCallback((userData) => {
     if (!userData?.currentProgress || !course) return;
@@ -233,21 +243,30 @@ const Learning = () => {
   };
 
   const handleNextScreen = async () => {
-    await saveProgress(0);
+    if (!currentUnit || !currentScreen) return;
 
+    // Find current screen index
     const currentIndex = currentUnit.screens.findIndex(
       s => s.screenId === currentScreen.screenId
     );
 
+    // Check if there's a next screen
     if (currentIndex < currentUnit.screens.length - 1) {
       const nextScreen = currentUnit.screens[currentIndex + 1];
+
+      // For content screens, just navigate
+      // For concept-check screens, they already answered to get here
+      await saveProgress(0);
       navigate(`/learn/${courseId}/${currentUnit.unitId}/${nextScreen.screenId}`);
     } else {
+      // Last screen of current unit - check if more units
       const unitIndex = course.units.findIndex(u => u.unitId === currentUnit.unitId);
       if (unitIndex < course.units.length - 1) {
         const nextUnit = course.units[unitIndex + 1];
+        await saveProgress(0);
         navigate(`/learn/${courseId}/${nextUnit.unitId}/${nextUnit.screens[0].screenId}`);
       } else {
+        // Course completed
         try {
           await progressAPI.completeCourse(user.id, courseId);
           showTemporaryFeedback('🎉 Congratulations! You completed the course!', true);
@@ -259,6 +278,7 @@ const Learning = () => {
       }
     }
 
+    // Reset states for new screen
     setCurrentQuestionIndex(0);
     setUserAnswer('');
     setShowExplanation(false);
@@ -373,23 +393,38 @@ const Learning = () => {
                         </div>
                       </div>
                       <div className="space-y-0.5">
-                        {unit.screens.map(screen => {
+                        {unit.screens.map((screen, screenIndex) => {
                           const isCurrentScreen = isCurrentUnit && screen.screenId === currentScreen.screenId;
                           const completed = isScreenCompleted(screen.screenId, unit.unitId);
+                          const isUnlocked = screenIndex === 0 || isScreenCompleted(unit.screens[screenIndex - 1].screenId, unit.unitId);
 
                           return (
                             <button
                               key={screen.screenId}
-                              onClick={() => navigate(`/learn/${courseId}/${unit.unitId}/${screen.screenId}`)}
+                              onClick={() => {
+                                if (isUnlocked || completed) {
+                                  navigate(`/learn/${courseId}/${unit.unitId}/${screen.screenId}`);
+                                } else {
+                                  showTemporaryFeedback('🔒 Complete previous screen first!', false);
+                                }
+                              }}
                               className={`w-full text-left px-2 py-1 rounded text-xs transition-colors flex items-center justify-between ${isCurrentScreen
                                 ? 'bg-blue-100 text-blue-700 font-medium'
-                                : 'text-gray-600 hover:bg-gray-100'
+                                : !isUnlocked && !completed
+                                  ? 'text-gray-400 cursor-not-allowed bg-gray-50 opacity-50'
+                                  : 'text-gray-600 hover:bg-gray-100'
                                 }`}
+                              disabled={!isUnlocked && !completed}
                             >
                               <span className="truncate">{screen.title}</span>
                               {completed && (
                                 <svg className="w-3 h-3 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                              {!isUnlocked && !completed && (
+                                <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                                 </svg>
                               )}
                             </button>

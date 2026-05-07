@@ -4,6 +4,8 @@ import { courseAPI, userAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { LoadingPage } from '../components/LoadingSpinner';
 import { Clock, Trophy, BookOpen, Play, CheckCircle, RefreshCw, ArrowLeft } from 'lucide-react';
+import axios from 'axios';
+import LockScreen from '../components/LockScreen';
 
 const CourseDetail = () => {
   const { id } = useParams();
@@ -16,6 +18,8 @@ const CourseDetail = () => {
   const [completedScreensCount, setCompletedScreensCount] = useState(0);
   const [courseXpEarned, setCourseXpEarned] = useState(0);
   const [totalScreens, setTotalScreens] = useState(0);
+  const [showLockScreen, setShowLockScreen] = useState(false);
+  const [prerequisiteDetails, setPrerequisiteDetails] = useState(null);
 
   useEffect(() => {
     const fetchCourse = async () => {
@@ -80,6 +84,58 @@ const CourseDetail = () => {
     return `/learn/${course?._id}/${course?.units[0]?.unitId}`;
   };
 
+  const checkPrerequisites = async () => {
+    if (!user?.id) return true; // Not logged in, allow access
+
+    try {
+      const response = await axios.get(`/api/prerequisites/check/${course._id}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+
+      if (response.data.allowed) {
+        // Proceed to course
+        navigate(getStartLink());
+      } else {
+        // Show lock screen modal
+        setShowLockScreen(true);
+        setPrerequisiteDetails(response.data);
+      }
+    } catch (error) {
+      console.error('Prerequisite check failed:', error);
+      // Fallback: allow access
+      navigate(getStartLink());
+    }
+  };
+
+  // Check prerequisites before starting course
+  const handleStartCourse = async () => {
+    if (!user?.id) {
+      // Not logged in, allow access
+      navigate(getStartLink());
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`http://localhost:5000/api/prerequisites/check/${course._id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (response.data.allowed) {
+        // Prerequisites met, proceed to course
+        navigate(getStartLink());
+      } else {
+        // Show lock screen
+        setPrerequisiteDetails(response.data);
+        setShowLockScreen(true);
+      }
+    } catch (error) {
+      console.error('Prerequisite check failed:', error);
+      // Fallback: allow access
+      navigate(getStartLink());
+    }
+  };
+
   const getButtonText = () => {
     if (!user?.id) return 'Start Course';
     if (isCompleted) return 'Review Course';
@@ -113,8 +169,8 @@ const CourseDetail = () => {
           <div className="flex flex-wrap gap-3 mb-4">
             <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">{course.category || 'General'}</span>
             <span className={`px-3 py-1 rounded-full text-sm font-medium ${course.difficulty === 'Beginner' ? 'bg-green-100 text-green-700' :
-                course.difficulty === 'Intermediate' ? 'bg-yellow-100 text-yellow-700' :
-                  'bg-red-100 text-red-700'
+              course.difficulty === 'Intermediate' ? 'bg-yellow-100 text-yellow-700' :
+                'bg-red-100 text-red-700'
               }`}>
               {course.difficulty || 'Beginner'}
             </span>
@@ -151,13 +207,13 @@ const CourseDetail = () => {
 
           {/* Single Start/Resume Button */}
           <div className="text-center">
-            <Link
-              to={getStartLink()}
+            <button
+              onClick={handleStartCourse}
               className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-lg px-8 py-3 rounded-xl transition-colors shadow-lg"
             >
               {getButtonIcon()}
               {getButtonText()}
-            </Link>
+            </button>
             {hasStarted && !isCompleted && (
               <p className="text-sm text-gray-500 mt-3">
                 You've completed {completedScreensCount} of {totalScreens} lessons
@@ -216,6 +272,24 @@ const CourseDetail = () => {
             })}
           </div>
         </div>
+        {/* Lock Screen Modal */}
+        {showLockScreen && prerequisiteDetails && (
+          <LockScreen
+            course={course}
+            prerequisites={prerequisiteDetails}
+            onClose={() => setShowLockScreen(false)}
+            onContinue={() => {
+              setShowLockScreen(false);
+              navigate(getStartLink());
+            }}
+            onTakeTest={() => {
+              // Your existing placement test logic here
+              setShowLockScreen(false);
+              // Navigate to test page or open test modal
+              navigate(`/placement-test/${course._id}`);
+            }}
+          />
+        )}
       </div>
     </div>
   );

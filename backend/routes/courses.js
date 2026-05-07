@@ -40,4 +40,22 @@ router.post('/',protect, admin, async (req, res) => {
   }
 });
 
+// Update course prerequisites (admin only)
+router.put('/:courseId/prerequisites', protect, admin, async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.courseId);
+    if (!course) {
+      return res.status(404).json({ message: 'Course not found' });
+    }
+
+    course.prerequisites = req.body;
+    await course.save();
+
+    res.json({ message: 'Prerequisites updated successfully', prerequisites: course.prerequisites });
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 export default router;
