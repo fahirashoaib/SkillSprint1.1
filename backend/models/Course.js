@@ -47,7 +47,7 @@ const courseSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['draft', 'published', 'archived'],
-    default: 'published' // Keep existing courses as published
+    default: 'draft' // Keep existing courses as published
   },
   generatedFrom: {
     type: mongoose.Schema.Types.ObjectId,

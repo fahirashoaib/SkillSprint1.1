@@ -1,4 +1,7 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+import groq
+import google.generativeai as genai
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
@@ -11,968 +14,626 @@ import time
 import logging
 from typing import Optional
 import re
-import groq
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Configure Groq
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-groq_client = None
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+providers = []
 
 if GROQ_API_KEY:
     try:
-        groq_client = groq.Groq(api_key=GROQ_API_KEY)
+        client = groq.Client(api_key=GROQ_API_KEY)
+        providers.append({"name": "groq", "client": client, "model": "llama-3.1-8b-instant", "available": True, "cooldown_until": 0})
         logger.info("Groq configured")
-        groq_client.models.list()
-        logger.info("Groq connection successful")
     except Exception as e:
-        logger.error(f"Error initializing Groq: {e}")
-        groq_client = None
-else:
-    logger.warning("No Groq API key found")
+        logger.error(f"Groq init failed: {e}")
 
-app = FastAPI()
+if GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        providers.append({"name": "gemini", "client": genai, "model": "gemini-2.5-flash", "available": True, "cooldown_until": 0})
+        logger.info("Gemini configured")
+    except Exception as e:
+        logger.error(f"Gemini init failed: {e}")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "http://localhost:5000", 
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5000",
-        "http://127.0.0.1:5173"
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+logger.info(f"Total providers: {len(providers)}")
+provider_usage = {p["name"]: 0 for p in providers}
+current_provider_index = 0
+
+
+def get_next_available_provider():
+    global current_provider_index
+    if not providers:
+        raise Exception("No AI providers available")
+    now = time.time()
+    for p in providers:
+        if not p["available"] and now >= p.get("cooldown_until", 0):
+            p["available"] = True
+            logger.info(f"{p['name']} cooldown expired, marking available")
+    available = [p for p in providers if p["available"]]
+    if not available:
+        soonest = min(providers, key=lambda p: p.get("cooldown_until", 0))
+        wait = max(0, soonest["cooldown_until"] - now)
+        logger.warning(f"All providers cooling. Waiting {wait:.1f}s for {soonest['name']}")
+        time.sleep(wait + 0.5)
+        soonest["available"] = True
+        available = [soonest]
+    provider = available[current_provider_index % len(available)]
+    current_provider_index += 1
+    return provider
+
+
+def call_provider(provider, prompt, response_format):
+    name = provider["name"]
+    client = provider["client"]
+    model = provider["model"]
+    if response_format == "json":
+        system_content = (
+            "You are a JSON-only generator. "
+            "Respond with ONLY valid JSON. No markdown, no backticks, no explanation. "
+            "Start with { or [ and end with } or ]."
+        )
+    else:
+        system_content = "You are a helpful AI that generates concise educational content."
+    if name == "groq":
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system_content}, {"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=4000,
+        )
+        return completion.choices[0].message.content
+    elif name == "gemini":
+        model_name = model.replace("models/", "")
+        model_instance = client.GenerativeModel(model_name)
+        response = model_instance.generate_content(f"{system_content}\n\nUser: {prompt}")
+        return response.text
+    raise Exception(f"Unknown provider: {name}")
+
+
+def call_ai_with_fallback(prompt: str, response_format: str = "text") -> str:
+    if not providers:
+        raise HTTPException(status_code=503, detail="No AI providers configured")
+    if len(prompt) > 2800:
+        prompt = prompt[:2800]
+    errors = []
+    for attempt in range(len(providers) * 3):
+        try:
+            provider = get_next_available_provider()
+            logger.info(f"Attempt {attempt + 1}: trying {provider['name']}...")
+            result = call_provider(provider, prompt, response_format)
+            provider_usage[provider["name"]] = provider_usage.get(provider["name"], 0) + 1
+            logger.info(f"SUCCESS with {provider['name']}")
+            return result
+        except Exception as e:
+            error_msg = str(e)
+            logger.warning(f"{provider['name']} failed: {error_msg[:120]}")
+            is_rate = any(k in error_msg.lower() for k in [
+                "rate_limit", "rate limit", "quota", "429", "413",
+                "limit", "exceeded", "resource_exhausted", "too many"
+            ])
+            if is_rate:
+                cooldown = 30 + (attempt * 15)
+                provider["available"] = False
+                provider["cooldown_until"] = time.time() + cooldown
+                logger.warning(f"{provider['name']} rate-limited, cooling {cooldown}s")
+            else:
+                time.sleep(2)
+            errors.append(f"{provider['name']}: {error_msg[:60]}")
+    raise HTTPException(status_code=500, detail=f"All AI providers failed: {'; '.join(errors)}")
+
+
+def call_ai(prompt, response_format="text"):
+    return call_ai_with_fallback(prompt, response_format)
+
 
 def extract_text_from_pdf(file_bytes):
     try:
         pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
         text = ""
-        for page in pdf_reader.pages:
+        for page in pdf_reader.pages[:8]:
             text += page.extract_text() or ""
-        return text
+        return re.sub(r'\s+', ' ', text)[:4000]
     except Exception as e:
         logger.error(f"PDF extraction error: {e}")
         raise
 
+
 def extract_text_from_docx(file_bytes):
     try:
         doc = docx.Document(io.BytesIO(file_bytes))
-        text = ""
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        return text
+        text = "\n".join(p.text for p in doc.paragraphs[:40])
+        return re.sub(r'\s+', ' ', text)[:4000]
     except Exception as e:
         logger.error(f"DOCX extraction error: {e}")
         raise
 
+
 def clean_json_response(text: str) -> str:
-    """Clean JSON from markdown code blocks and fix common issues"""
-    # Remove markdown code blocks
+    if not text:
+        return ""
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0]
     elif "```" in text:
-        text = text.split("```")[1].split("```")[0]
-    
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1]
     text = text.strip()
     
-    # Look for the LAST complete JSON array or object
-    # The AI sometimes includes the example first, then the actual response
-    
-    # For arrays - find the LAST complete array
-    if '[' in text and ']' in text:
-        # Find all potential arrays
-        arrays = []
-        start_positions = [i for i, char in enumerate(text) if char == '[']
-        
-        for start in start_positions:
-            bracket_count = 0
-            for i in range(start, len(text)):
-                if text[i] == '[':
-                    bracket_count += 1
-                elif text[i] == ']':
-                    bracket_count -= 1
-                    if bracket_count == 0:
-                        # Found a complete array
-                        arrays.append(text[start:i+1])
-                        break
-        
-        # Return the LAST array (most likely the actual response)
-        if arrays:
-            return arrays[-1]
-    
-    # For objects - find the LAST complete object
+    # 🔥 NEW: Handle case where response is just multiple objects
     if '{' in text and '}' in text:
-        objects = []
-        start_positions = [i for i, char in enumerate(text) if char == '{']
-        
-        for start in start_positions:
-            brace_count = 0
-            for i in range(start, len(text)):
-                if text[i] == '{':
-                    brace_count += 1
-                elif text[i] == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        objects.append(text[start:i+1])
-                        break
-        
-        # Return the LAST object
-        if objects:
-            return objects[-1]
-    
+        # Count if it's multiple objects
+        if text.count('{') > 1 and not text.startswith('['):
+            # It's multiple objects - keep as is, safe_json_loads will wrap
+            pass
+        else:
+            start, end = text.find('{'), text.rfind('}')
+            if end > start:
+                text = text[start:end + 1]
+    elif '[' in text and ']' in text:
+        start, end = text.find('['), text.rfind(']')
+        if end > start:
+            text = text[start:end + 1]
     return text
 
-def call_groq(prompt, response_format="text"):
-    try:
-        model = "llama-3.3-70b-versatile"
-        
-        if response_format == "json":
-            system_content = """You are a JSON generator. You MUST respond with ONLY valid JSON.
-            - Use double quotes for all strings
-            - No comments or explanations
-            - No markdown formatting
-            - No text before or after the JSON
-            - Return a SINGLE JSON array or object, never multiple concatenated objects"""
-        else:
-            system_content = "You are a helpful AI that generates educational content. Write clear, well-formatted text."
-        
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": prompt}
-        ]
-        
-        completion = groq_client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.1,
-            max_tokens=8000,
-            top_p=0.9,
-            stream=False
-        )
-        
-        return completion.choices[0].message.content
-        
-    except Exception as e:
-        logger.error(f"Groq API error: {e}")
-        raise e
 
 def safe_json_loads(raw: str):
-    """
-    Best-effort JSON parsing with a single Groq repair attempt.
-    Returns parsed JSON on success, raises on failure.
-    """
+    """More robust JSON parser that handles incomplete/malformed JSON"""
+    import re  # Import at the top of function to ensure it's always available
+    
+    if not raw:
+        raise ValueError("Empty response")
+    
     cleaned = clean_json_response(raw)
+    
+    # Try 1: Direct parse
     try:
         return json.loads(cleaned)
-    except Exception:
-        # Try to extract the last complete object/array via bracket matching
-        try:
-            # Arrays
-            if '[' in cleaned and ']' in cleaned:
-                arrays = []
-                start_positions = [i for i, ch in enumerate(cleaned) if ch == '[']
-                for start in start_positions:
-                    depth = 0
-                    for i in range(start, len(cleaned)):
-                        if cleaned[i] == '[':
-                            depth += 1
-                        elif cleaned[i] == ']':
-                            depth -= 1
-                            if depth == 0:
-                                arrays.append(cleaned[start:i+1])
-                                break
-                if arrays:
-                    return json.loads(arrays[-1])
-            # Objects
-            if '{' in cleaned and '}' in cleaned:
-                objects = []
-                start_positions = [i for i, ch in enumerate(cleaned) if ch == '{']
-                for start in start_positions:
-                    depth = 0
-                    for i in range(start, len(cleaned)):
-                        if cleaned[i] == '{':
-                            depth += 1
-                        elif cleaned[i] == '}':
-                            depth -= 1
-                            if depth == 0:
-                                objects.append(cleaned[start:i+1])
-                                break
-                if objects:
-                    return json.loads(objects[-1])
-        except Exception:
-            pass
-
-        # One repair attempt via Groq
-        repair_prompt = f"""You previously returned INVALID JSON.
-
-Fix it and return ONLY valid JSON (no markdown, no explanation).
-
-INVALID JSON:
-{cleaned}
-"""
-        repaired = call_groq(repair_prompt, "json")
-        repaired_cleaned = clean_json_response(repaired)
-        return json.loads(repaired_cleaned)
+    except json.JSONDecodeError:
+        pass
+    
+    # Try 2: Fix trailing commas and add missing brackets
+    try:
+        # Remove trailing commas before } or ]
+        fixed = re.sub(r',\s*([}\]])', r'\1', cleaned)
+        # Add missing closing brackets if needed
+        open_braces = fixed.count('{')
+        close_braces = fixed.count('}')
+        open_brackets = fixed.count('[')
+        close_brackets = fixed.count(']')
+        
+        if open_braces > close_braces:
+            fixed += '}' * (open_braces - close_braces)
+        if open_brackets > close_brackets:
+            fixed += ']' * (open_brackets - close_brackets)
+        
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+    
+    # Try 3: Extract only complete objects using regex
+    try:
+        # Match complete objects { ... } (handles nested)
+        obj_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        objects = re.findall(obj_pattern, cleaned)
+        if objects:
+            parsed_objects = []
+            for obj_str in objects:
+                try:
+                    parsed_objects.append(json.loads(obj_str))
+                except:
+                    pass
+            if parsed_objects:
+                if len(parsed_objects) > 1:
+                    return parsed_objects
+                return parsed_objects[0]
+    except:
+        pass
+    
+    # Try 4: Use ast.literal_eval as fallback (for Python dicts)
+    try:
+        import ast
+        return ast.literal_eval(cleaned)
+    except:
+        pass
+    
+    raise ValueError(f"Could not parse JSON. Snippet: {cleaned[:300]}")
 
 def normalize_unit_title(title: str) -> str:
     if not title:
         return title
-    t = str(title).strip()
-    # Strip "Unit 1:" / "Unit 1 -" prefixes
-    t = re.sub(r'^\s*unit\s*\d+\s*[:\-]\s*', '', t, flags=re.IGNORECASE).strip()
+    t = re.sub(r'^\s*unit\s*\d+\s*[:\-]\s*', '', str(title).strip(), flags=re.IGNORECASE).strip()
     return t or str(title).strip()
 
-def looks_like_headings(items) -> bool:
-    """
-    Heuristic: detect when 'learning objectives' are actually topic headings,
-    e.g., short title-cased phrases like 'Trees' or 'Binary Search Trees'.
-    """
-    if not isinstance(items, list) or not items:
-        return True
 
-    heading_like = 0
-    for it in items:
-        s = str(it or '').strip()
-        if not s:
-            continue
-        # Too short and no verb/punctuation
-        word_count = len(re.findall(r'\b\w+\b', s))
-        has_verbish = bool(re.search(r'^(define|describe|explain|compare|analyze|implement|apply|identify|traverse|evaluate|design|solve|use|construct)\b', s, re.IGNORECASE))
-        if (word_count <= 4 and not has_verbish) or re.match(r'^[A-Z0-9][A-Za-z0-9\s:.-]{0,30}$', s):
-            heading_like += 1
+def compact_excerpt(text: str, max_len: int = 1400) -> str:
+    t = (text or "").strip()
+    if len(t) <= max_len:
+        return t
+    return t[:int(max_len * 0.65)] + "\n...\n" + t[-int(max_len * 0.35):]
 
-    # If most items look like headings, treat as bad output
-    return heading_like >= max(2, int(0.6 * len(items)))
 
-def ensure_complete_concept_checks(unit_data: dict) -> dict:
-    """
-    Ensure concept-check screens contain complete question objects:
-    - question (string)
-    - options (4 strings) for mcq
-    - correctAnswer (string, must be one of options for mcq)
-    - explanation (string)
-    - xp (int)
-    """
-    if not isinstance(unit_data, dict):
-        return {"title": "Unit", "screens": []}
-
+def ensure_concept_checks(unit_data: dict) -> dict:
     screens = unit_data.get("screens", [])
     if not isinstance(screens, list):
         unit_data["screens"] = []
         return unit_data
-
-    repaired_screens = []
-    for s_idx, screen in enumerate(screens):
+    repaired = []
+    for screen in screens:
         if not isinstance(screen, dict):
             continue
-
-        s_type = str(screen.get("type", "content") or "content").strip()
-        if s_type != "concept-check":
-            repaired_screens.append(screen)
+        if str(screen.get("type", "content")).strip() != "concept-check":
+            repaired.append(screen)
             continue
-
-        questions = screen.get("questions", [])
-        if not isinstance(questions, list):
-            questions = []
-
-        fixed_questions = []
-        for q_idx, q in enumerate(questions):
+        qs = screen.get("questions", [])
+        if not isinstance(qs, list):
+            qs = []
+        fixed_qs = []
+        for qi, q in enumerate(qs):
             if not isinstance(q, dict):
                 q = {}
-            q_type = str(q.get("type", "mcq") or "mcq").strip()
-            question_text = str(q.get("question") or "").strip()
-
-            # Provide a minimal placeholder rather than an empty question
-            if not question_text:
-                question_text = f"Quick check: choose the correct answer (Q{q_idx + 1})."
-
-            xp_val = q.get("xp", 5)
-            try:
-                xp_val = int(xp_val)
-            except Exception:
-                xp_val = 5
-            if xp_val < 0:
-                xp_val = 0
-
-            explanation = str(q.get("explanation") or "").strip()
-            if not explanation:
-                explanation = "Review the previous screen and choose the option that best matches the concept."
-
-            fixed = {
-                "type": q_type,
-                "question": question_text,
-                "explanation": explanation,
-                "xp": xp_val
+            f = {
+                "type": str(q.get("type", "mcq")).strip() or "mcq",
+                "question": str(q.get("question") or f"Question {qi+1}").strip(),
+                "explanation": str(q.get("explanation") or "Review the content.").strip(),
+                "xp": int(q.get("xp", 5)) if str(q.get("xp", "5")).lstrip('-').isdigit() else 5,
             }
-
-            if q_type == "mcq":
-                options = q.get("options", [])
-                if not isinstance(options, list):
-                    options = []
-                options = [str(o).strip() for o in options if str(o).strip()]
-                # Ensure exactly 4 options
-                while len(options) < 4:
-                    options.append(f"Option {chr(65 + len(options))}")
-                if len(options) > 4:
-                    options = options[:4]
-
-                correct = str(q.get("correctAnswer") or "").strip()
-                if correct not in options:
-                    # Try to map numeric index answers (e.g., 0/1/2/3 or A/B/C/D)
-                    if correct.isdigit():
-                        idx = int(correct)
-                        if 0 <= idx < len(options):
-                            correct = options[idx]
-                    elif correct.upper() in ["A", "B", "C", "D"]:
-                        idx = ord(correct.upper()) - ord("A")
-                        if 0 <= idx < len(options):
-                            correct = options[idx]
-                    else:
-                        correct = options[1]  # default to B
-
-                fixed.update({
-                    "options": options,
-                    "correctAnswer": correct
-                })
-            else:
-                # Non-mcq: keep whatever correctAnswer exists, but ensure it's present
-                fixed["correctAnswer"] = q.get("correctAnswer", "")
-
-            fixed_questions.append(fixed)
-
-        # If model produced no questions at all, add one placeholder mcq
-        if not fixed_questions:
-            fixed_questions = [{
-                "type": "mcq",
-                "question": "Quick check: which option best matches the concept?",
-                "options": ["Option A", "Option B", "Option C", "Option D"],
-                "correctAnswer": "Option B",
-                "explanation": "Option B matches the definition from the content screen.",
-                "xp": 5
-            }]
-
+            opts = [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
+            while len(opts) < 4:
+                opts.append(f"Option {chr(65+len(opts))}")
+            f["options"] = opts[:4]
+            f["correctAnswer"] = str(q.get("correctAnswer", opts[0])).strip()
+            fixed_qs.append(f)
+        if not fixed_qs:
+            fixed_qs = [{"type":"mcq","question":"Which best describes the key concept?",
+                         "options":["Option A","Option B","Option C","Option D"],
+                         "correctAnswer":"Option A","explanation":"Review the content.","xp":5}]
         screen["type"] = "concept-check"
-        screen["questions"] = fixed_questions
-        repaired_screens.append(screen)
-
-    unit_data["screens"] = repaired_screens
+        screen["questions"] = fixed_qs
+        repaired.append(screen)
+    unit_data["screens"] = repaired
     return unit_data
 
-def validate_unit_content(unit_data: dict) -> list:
-    """Return a list of human-readable issues (empty list means ok)."""
-    issues = []
-    if not isinstance(unit_data, dict):
-        return ["unit_data is not an object"]
-    screens = unit_data.get("screens")
-    if not isinstance(screens, list) or not screens:
-        return ["no screens generated"]
 
-    if len(screens) < 8:
-        issues.append(f"too few screens ({len(screens)})")
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000","http://localhost:5000","http://localhost:5173",
+                   "http://127.0.0.1:3000","http://127.0.0.1:5000","http://127.0.0.1:5173"],
+    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+)
 
-    concept_checks = [s for s in screens if isinstance(s, dict) and str(s.get("type")).strip() == "concept-check"]
-    if len(concept_checks) < 2:
-        issues.append(f"too few concept-check screens ({len(concept_checks)})")
-
-    has_takeaways = any(
-        isinstance(s, dict) and isinstance(s.get("title"), str) and "takeaway" in s["title"].lower()
-        for s in screens
-    )
-    if not has_takeaways:
-        issues.append("missing Key Takeaways screen")
-
-    # Detect generic placeholder MCQs
-    placeholder_mcq = 0
-    total_mcq = 0
-    for s in concept_checks:
-        qs = s.get("questions", [])
-        if not isinstance(qs, list):
-            continue
-        for q in qs:
-            if not isinstance(q, dict):
-                continue
-            if str(q.get("type", "mcq")) != "mcq":
-                continue
-            total_mcq += 1
-            opts = q.get("options", [])
-            if isinstance(opts, list) and set(opts) >= {"Option A", "Option B", "Option C", "Option D"}:
-                placeholder_mcq += 1
-    if total_mcq > 0 and placeholder_mcq / total_mcq >= 0.5:
-        issues.append("MCQ options look like placeholders (Option A/B/C/D)")
-
-    return issues
-
-def build_richer_mock_unit_content(unitTitle: str, unitDescription: str = ""):
-    title = normalize_unit_title(unitTitle)
-    desc_hint = (unitDescription or "").strip()
-    if desc_hint:
-        desc_hint = desc_hint.replace('\n', ' ').strip()
-        if len(desc_hint) > 140:
-            desc_hint = desc_hint[:137] + "..."
-
-    return {
-        "title": title,
-        "screens": [
-            {
-                "title": "What you will learn",
-                "description": f"In this unit, you will:\n- Explain the main idea\n- Work through an example\n- Test yourself with quick checks\n{('- ' + desc_hint) if desc_hint else ''}".strip(),
-                "type": "content"
-            },
-            {
-                "title": "Key terms",
-                "description": "Key terms to recognize:\n- Definition\n- Properties\n- Common mistakes\n- Real-world meaning",
-                "type": "content"
-            },
-            {
-                "title": "Core concept",
-                "description": "Definition:\nExplain the concept in simple terms.\nWhy it matters:\nConnect it to a real situation.\nCommon mistake:\nWhat learners often confuse.",
-                "type": "content"
-            },
-            {
-                "title": "Worked example",
-                "description": "Example:\nWalk through a small example step-by-step.\nKey observation:\nHighlight what to notice.\nResult:\nSummarize the outcome.",
-                "type": "content"
-            },
-            {
-                "title": "Quick Check 1",
-                "type": "concept-check",
-                "questions": [
-                    {
-                        "type": "mcq",
-                        "question": "Which statement best matches the definition from the previous screen?",
-                        "options": ["A definition", "A property", "An example", "A misconception"],
-                        "correctAnswer": "A definition",
-                        "explanation": "The definition states what the concept is.",
-                        "xp": 5
-                    },
-                    {
-                        "type": "mcq",
-                        "question": "What is a common mistake learners make with this concept?",
-                        "options": ["Confusing terms", "Overcomplicating", "Ignoring constraints", "Skipping examples"],
-                        "correctAnswer": "Confusing terms",
-                        "explanation": "Many learners mix up similar terminology early on.",
-                        "xp": 5
-                    }
-                ]
-            },
-            {
-                "title": "How to apply it",
-                "description": "Step-by-step:\n1) Identify what you’re given\n2) Apply the rule\n3) Check your result\n4) Interpret the outcome",
-                "type": "content"
-            },
-            {
-                "title": "Quick Check 2",
-                "type": "concept-check",
-                "questions": [
-                    {
-                        "type": "mcq",
-                        "question": "Which step should happen first when applying the concept?",
-                        "options": ["Apply the rule", "Identify what you’re given", "Interpret the outcome", "Check the result"],
-                        "correctAnswer": "Identify what you’re given",
-                        "explanation": "You need inputs/conditions before applying any rule.",
-                        "xp": 5
-                    }
-                ]
-            },
-            {
-                "title": "Key Takeaways",
-                "description": "- Main idea in one line\n- One key rule/property\n- When to apply it\n- One pitfall to avoid",
-                "type": "content"
-            },
-            {
-                "title": "Final quick check",
-                "type": "concept-check",
-                "questions": [
-                    {
-                        "type": "mcq",
-                        "question": "Which option best summarizes the key takeaway of this unit?",
-                        "options": ["A short summary", "A random fact", "A separate topic", "A vague statement"],
-                        "correctAnswer": "A short summary",
-                        "explanation": "Key takeaways are concise summaries of what matters most.",
-                        "xp": 5
-                    }
-                ]
-            }
-        ]
-    }
-
-def compact_document_excerpt(text: str, max_len: int = 6500) -> str:
-    """Keep a head+tail excerpt to reduce prompt size while retaining coverage."""
-    t = (text or "").strip()
-    if len(t) <= max_len:
-        return t
-    head = t[: int(max_len * 0.7)]
-    tail = t[-int(max_len * 0.3):]
-    return head + "\n...\n" + tail
 
 @app.post("/generate-step")
 async def generate_step(
     file: UploadFile = File(...),
     step: str = Form(...),
+    sessionId: Optional[str] = Form(None),
     overview: Optional[str] = Form(None),
     unitIndex: Optional[str] = Form(None),
     unitTitle: Optional[str] = Form(None),
-    unitDescription: Optional[str] = Form(None)
+    unitDescription: Optional[str] = Form(None),
+    feedbackInstructions: Optional[str] = Form(None),
 ):
     try:
-        logger.info(f"Processing step: {step}, file: {file.filename}")
-        
+        logger.info(f"Step={step} file={file.filename}")
         contents = await file.read()
-        if file.filename.endswith('.pdf'):
-            document_text = extract_text_from_pdf(contents)
-        elif file.filename.endswith('.docx'):
-            document_text = extract_text_from_docx(contents)
+        if file.filename.lower().endswith('.pdf'):
+            doc_text = extract_text_from_pdf(contents)
+        elif file.filename.lower().endswith('.docx'):
+            doc_text = extract_text_from_docx(contents)
         else:
-            document_text = contents.decode('utf-8')
+            doc_text = contents.decode('utf-8', errors='ignore')[:4000]
 
-        logger.info(f"Extracted {len(document_text)} characters")
+        if not doc_text:
+            raise HTTPException(status_code=400, detail="Could not extract text from document")
+        if not providers:
+            raise HTTPException(status_code=503, detail="No AI providers configured")
 
-        if not groq_client:
-            logger.warning("No Groq client, using mock data")
-            return generate_mock_response(step, overview, unitTitle, unitIndex)
+        time.sleep(0.3)
+        extra = f"\nAdmin instructions: {feedbackInstructions}" if feedbackInstructions else ""
 
-        time.sleep(0.5)
-
-        # STEP 1: Generate Learning Objectives
+        # ── Overview ──────────────────────────────────────────────────────────
         if step == 'overview':
-            prompt = f"""Based on the following document, generate 4-6 LEARNING OBJECTIVES as a JSON array of strings.
+            prompt = (
+                f"Document:\n{compact_excerpt(doc_text, 1300)}{extra}\n\n"
+                "List 4-6 learning objectives as a JSON array of strings.\n"
+                "Each starts with an action verb. Max 12 words each.\n"
+                'Return ONLY: ["Objective 1", "Objective 2", ...]'
+            )
+            response = call_ai(prompt, "json")
+            parsed = safe_json_loads(response)
+            if isinstance(parsed, dict):
+                objectives = parsed.get("overview") or parsed.get("objectives") or list(parsed.values())[0]
+            else:
+                objectives = parsed
+            if not isinstance(objectives, list):
+                objectives = [objectives]
+            cleaned = [str(next(iter(o.values())) if isinstance(o, dict) else o).strip() for o in objectives if o]
+            cleaned = [c for c in cleaned if c]
+            if not cleaned:
+                cleaned = ["Understand core concepts", "Apply key principles", "Analyse examples", "Evaluate outcomes"]
+            return {"sessionId": sessionId or str(int(time.time()*1000)), "overview": cleaned}
 
-        DOCUMENT CONTENT:
-        {document_text[:8000]}
+        # ── Units ─────────────────────────────────────────────────────────────
+        elif step == 'units':
+            prompt = (
+                f"Document:\n{compact_excerpt(doc_text, 1100)}{extra}\n\n"
+                "Create a course outline as a JSON array of 4-6 units.\n"
+                'Each: {"title":"short title","description":"one sentence","estimatedScreens":6}\n'
+                "Return ONLY the JSON array."
+            )
+            response = call_ai(prompt, "json")
+            parsed = safe_json_loads(response)
+            if isinstance(parsed, dict):
+                units = parsed.get("units") or [parsed]
+            else:
+                units = parsed if isinstance(parsed, list) else [parsed]
+            validated = []
+            for i, u in enumerate(units):
+                if isinstance(u, dict):
+                    validated.append({
+                        "title": normalize_unit_title(u.get("title", f"Unit {i+1}")),
+                        "description": str(u.get("description","")).replace('\n',' ').strip() or "Ready to learn?",
+                        "estimatedScreens": int(u.get("estimatedScreens", 6)),
+                    })
+            if len(validated) < 3:
+                validated = [
+                    {"title":"Foundations","description":"Core concepts","estimatedScreens":6},
+                    {"title":"Key Ideas","description":"Main principles","estimatedScreens":6},
+                    {"title":"Applications","description":"Practical use","estimatedScreens":6},
+                    {"title":"Review","description":"Consolidate learning","estimatedScreens":5},
+                ]
+            return {"sessionId": sessionId, "units": validated}
 
-        Return ONLY a valid JSON array of strings. Do NOT return objects with keys.
+        # ── Unit content ──────────────────────────────────────────────────────
+        elif step == 'unit-content':
+            if not unitTitle:
+                return {"error": "Missing unitTitle"}
+            title_clean = normalize_unit_title(unitTitle)
+            snippet = compact_excerpt(doc_text, 900)
 
-        CORRECT EXAMPLE:
-        ["Define and explain the concept of a tree data structure", "Describe the properties and terminology of trees", "Explain the difference between depth and height in a tree"]
+            prompt = f"""Generate Duolingo-style micro-learning JSON. Return ONLY valid JSON.
 
-        VERY IMPORTANT:
-        - Do NOT return topic headings like "Trees" or "Binary Search Trees"
-        - Do NOT return course titles or codes like "CSCI 210"
-        - Each item MUST be a full-sentence learning objective starting with an action verb (Define/Explain/Compare/Implement/Analyze/etc.)
-        - Each objective should be 8-20 words
-
-        INCORRECT (DO NOT DO THIS):
-        [{{"objective": "Define and explain the concept of a tree data structure"}}]
-
-        Requirements:
-        - Each objective should be a plain string, not an object
-        - Start with action verbs
-        - Be clear and beginner-friendly
-        - Base on document content only
-
-        Return ONLY the JSON array:"""
-
-            try:
-                response = call_groq(prompt, "json")
-                logger.info(f"Raw overview response: {response[:200]}")
-                
-                parsed = safe_json_loads(response)
-                # Some models wrap results like {"overview": [...]}
-                if isinstance(parsed, dict) and "overview" in parsed:
-                    objectives = parsed.get("overview")
-                else:
-                    objectives = parsed
-                if not isinstance(objectives, list):
-                    objectives = [objectives]
-                
-                # CRITICAL FIX: Extract objective strings if they're wrapped in objects
-                cleaned_objectives = []
-                for obj in objectives:
-                    if isinstance(obj, dict):
-                        # If it's an object, try to get the first value or 'objective' key
-                        if 'objective' in obj:
-                            cleaned_objectives.append(str(obj['objective']).strip())
-                        else:
-                            # Take the first value from the object
-                            for value in obj.values():
-                                cleaned_objectives.append(str(value).strip())
-                                break
-                    else:
-                        # If it's already a string, use it directly
-                        cleaned_objectives.append(str(obj).strip())
-                
-                # Remove any empty strings
-                cleaned_objectives = [o for o in cleaned_objectives if o]
-
-                # If the model returned headings instead of objectives, do one strict retry
-                if looks_like_headings(cleaned_objectives):
-                    strict_prompt = f"""Convert the following TOPIC HEADINGS into 4-6 LEARNING OBJECTIVES.
-
-Headings:
-{json.dumps(cleaned_objectives, ensure_ascii=False)}
+Unit: "{title_clean}"
+Context: {snippet}{extra}
 
 Rules:
-- Return ONLY a JSON array of strings
-- Each string must start with an action verb (Define/Explain/Compare/Implement/Analyze/Apply)
-- Each objective must be 8-20 words and end with a period
-- No headings, no course codes, no single-word items
-"""
-                    strict_resp = call_groq(strict_prompt, "json")
-                    strict_obj = safe_json_loads(strict_resp)
-                    cleaned_objectives = [str(x).strip() for x in strict_obj if str(x).strip()]
-                
-                if not cleaned_objectives:
-                    cleaned_objectives = [
-                        "Learn the core concepts",
-                        "Understand key principles",
-                        "Master fundamental operations",
-                        "Apply knowledge to solve problems"
-                    ]
-                
-                logger.info(f"Generated {len(cleaned_objectives)} learning objectives")
-                
-                # Generate a session ID
-                session_id = str(int(time.time() * 1000))
-                
-                return {
-                    "sessionId": session_id,
-                    "overview": cleaned_objectives  # Now this is an array of strings
-                }
-                
-            except Exception as e:
-                logger.error(f"Overview generation error: {e}")
-                # Return mock data with session ID
-                return {
-                    "sessionId": str(int(time.time() * 1000)),
-                    "overview": [
-                        "Learn the core concepts",
-                        "Understand key principles",
-                        "Master fundamental operations",
-                        "Apply knowledge to solve problems"
-                    ]
-                }
+- 5-7 screens total
+- content screens: title max 6 words, description max 35 words + 1 example
+- concept-check screens: 1-2 MCQs, 4 short options, mark correct answer
+- LAST screen title contains "Takeaway", description = 3 bullets separated by \\n
+- Flash-card style, no long paragraphs
 
-        # STEP 2: Generate Units
-        elif step == 'units':
-            # Parse overview if it's a JSON string
-            overview_text = overview
-            if overview:
-                try:
-                    parsed = json.loads(overview)
-                    if isinstance(parsed, list):
-                        overview_text = '\n'.join(parsed)
-                except:
-                    pass
-            
-            prompt = f"""Based ONLY on the document content below, generate a course outline as a JSON array of units.
-            
-        IMPORTANT:
-        - Decide the number of units based on the document length and complexity (typically 4-12).
-        - Do NOT name units like "Unit 1" or "Unit 2". Use meaningful topic titles.
-        - Each description must be ONE concise line (no newlines).
-        - Do NOT use the example topics. Generate units based SOLELY on the document.
+Exact JSON shape to return:
+{{"title":"{title_clean}","screens":[
+  {{"type":"content","title":"Title Here","description":"Short text. Example: ..."}},
+  {{"type":"concept-check","title":"Quick Check","questions":[{{"type":"mcq","question":"Question?","options":["A","B","C","D"],"correctAnswer":"A","explanation":"Why A is correct","xp":5}}]}},
+  {{"type":"content","title":"Key Takeaway","description":"• Point 1\\n• Point 2\\n• Point 3"}}
+]}}"""
 
-        Document content:
-        {document_text[:8000]}
-
-        Course Learning Objectives:
-        {overview_text}
-
-        Generate units about the actual topic in the document.
-
-        Return ONLY a valid JSON array with this structure:
-        [
-            {{
-                "title": "Unit Title (specific to the document topic)",
-                "description": "One-line description of what this unit covers",
-                "estimatedScreens": 10
-            }}
-        ]
-
-        Return ONLY the JSON array:"""
+            response = call_ai(prompt, "json")
+            logger.info(f"unit-content raw ({len(response)} chars): {response[:150]}")
 
             try:
-                response = call_groq(prompt, "json")
-                logger.info(f"Raw units response: {response[:200]}")
-                
+                parsed = json.loads(clean_json_response(response))
+            except Exception:
                 parsed = safe_json_loads(response)
-                # Some models wrap results like {"units": [...]}
-                if isinstance(parsed, dict) and "units" in parsed:
-                    units = parsed.get("units")
-                else:
-                    units = parsed
-                
-                if not isinstance(units, list):
-                    units = [units]
-                
-                validated_units = []
-                for i, unit in enumerate(units):
-                    if isinstance(unit, dict):
-                        title = normalize_unit_title(unit.get("title", f"Unit {i+1}"))
-                        desc = str(unit.get("description", "Ready to learn? Start now!")).replace('\n', ' ').strip()
-                        validated_units.append({
-                            "title": title,
-                            "description": desc,
-                            "estimatedScreens": int(unit.get("estimatedScreens", 10))
-                        })
-                
-                if len(validated_units) >= 3:
-                    logger.info(f"Generated {len(validated_units)} units")
-                    return {"units": validated_units}
-                else:
-                    return {"units": generate_mock_units()}
-                    
-            except Exception as e:
-                logger.error(f"Units generation error: {e}")
-                return {"units": generate_mock_units()}
 
-        # STEP 3: Generate Unit Content
-        elif step == 'unit-content':
-            if not unitIndex or not unitTitle:
-                return {"error": "Missing unit information"}
-            
-            # Parse overview if needed
-            overview_text = overview
-            if overview:
-                try:
-                    parsed = json.loads(overview)
-                    if isinstance(parsed, list):
-                        overview_text = '\n'.join(parsed)
-                except:
-                    pass
-            
-            unitTitleClean = normalize_unit_title(unitTitle)
-            unitDescClean = (unitDescription or "").replace("\n", " ").strip()
-            doc_excerpt = compact_document_excerpt(document_text, 6500)
-            prompt = f"""Based on the document, generate detailed screens for the unit: "{unitTitleClean}" as a JSON object.
+            if isinstance(parsed, list):
+                unit_data = (parsed[0] if parsed and isinstance(parsed[0], dict) else {})
+            elif isinstance(parsed, dict):
+                unit_data = parsed.get("unit") if isinstance(parsed.get("unit"), dict) else parsed
+            else:
+                unit_data = {}
 
-Document content:
-{doc_excerpt}
+            if not isinstance(unit_data, dict):
+                unit_data = {}
+            unit_data.setdefault("title", title_clean)
+            unit_data.setdefault("screens", [])
 
-Course Learning Objectives:
-{overview_text}
+            # Coerce all string fields
+            for screen in unit_data.get("screens", []):
+                if not isinstance(screen, dict):
+                    continue
+                for f in ['title','description','content']:
+                    if f in screen and not isinstance(screen[f], str):
+                        screen[f] = str(screen[f])
+                if 'title' in screen:
+                    screen['title'] = screen['title'].strip()
+                for q in screen.get("questions",[]):
+                    if isinstance(q, dict):
+                        for f in ['question','explanation']:
+                            if f in q and not isinstance(q[f], str):
+                                q[f] = str(q[f])
+                        if 'options' in q:
+                            q['options'] = [str(o) for o in q['options']]
 
-Unit description (1 line):
-{unitDescClean}
+            unit_data['title'] = normalize_unit_title(unit_data.get('title', title_clean))
+            unit_data = ensure_concept_checks(unit_data)
 
-Return ONLY a valid JSON object with this structure:
-{{
-    "title": "{unitTitleClean}",
-    "screens": [
-        {{
-            "title": "Screen Title",
-            "description": "Clear explanation with examples",
-            "type": "content"
-        }},
-        {{
-            "title": "Quick Check",
-            "type": "concept-check",
-            "questions": [
-                {{
-                    "type": "mcq",
-                    "question": "Question text",
-                    "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
-                    "correctAnswer": "Option 1",
-                    "explanation": "Explanation",
-                    "xp": 5
-                }}
-            ]
-        }}
-    ]
-}}
+            # Fallback minimal screens
+            if len(unit_data.get("screens",[])) < 3:
+                unit_data["screens"] = [
+                    {"type":"content","title":"Introduction","description":f"Welcome to {title_clean}. Let's get started."},
+                    {"type":"concept-check","title":"Quick Check","questions":[{
+                        "type":"mcq","question":f"What is the focus of {title_clean}?",
+                        "options":["Core concepts","History","Advanced math","None of the above"],
+                        "correctAnswer":"Core concepts","explanation":"This unit covers core concepts.","xp":5
+                    }]},
+                    {"type":"content","title":"Key Takeaway","description":f"• You learned {title_clean}\n• Apply in practice\n• Review if unsure"},
+                ]
 
-Requirements:
-- Include 8-15 screens
-- Mix content and concept-check screens (at least 2 concept-check screens)
-- Include at least one screen that summarizes key takeaways (title should include 'Key Takeaways')
-- Use simple, friendly language
-- Include analogies and examples
-- For each content screen, write 3-7 short lines in the description (use \\n between lines)
-- For each concept-check screen:
-  - Include 1-3 questions
-  - For mcq questions: ALWAYS include exactly 4 options, and correctAnswer must match one of the options
-  - ALWAYS include explanation and xp
-- Do NOT use placeholder options like \"Option A\"/\"Option B\". Make options meaningful.
-
-Return ONLY the JSON object:"""
-
-            try:
-                response = call_groq(prompt, "json")
-                logger.info(f"Raw unit content response: {response[:200]}")
-                parsed = safe_json_loads(response)
-                # Some models wrap results like {"unit": {...}}
-                if isinstance(parsed, dict) and "unit" in parsed and isinstance(parsed.get("unit"), dict):
-                    unit_data = parsed.get("unit")
-                else:
-                    unit_data = parsed
-                if not isinstance(unit_data, dict):
-                    raise ValueError("unit-content response is not a JSON object")
-                
-                # Convert all text fields to strings
-                if 'screens' in unit_data and isinstance(unit_data['screens'], list):
-                    for screen in unit_data['screens']:
-                        for field in ['title', 'description', 'content']:
-                            if field in screen and not isinstance(screen[field], str):
-                                screen[field] = str(screen[field])
-                        if 'title' in screen:
-                            screen['title'] = str(screen['title']).strip()
-                        
-                        if 'questions' in screen and isinstance(screen['questions'], list):
-                            for q in screen['questions']:
-                                for field in ['question', 'explanation']:
-                                    if field in q and not isinstance(q[field], str):
-                                        q[field] = str(q[field])
-                                if 'options' in q and isinstance(q['options'], list):
-                                    q['options'] = [str(opt) for opt in q['options']]
-                
-                if 'screens' not in unit_data:
-                    unit_data['screens'] = []
-                if 'title' in unit_data:
-                    unit_data['title'] = normalize_unit_title(unit_data.get('title'))
-
-                # Ensure concept checks are complete (no partial questions)
-                unit_data = ensure_complete_concept_checks(unit_data)
-
-                # Validate quality; retry once if output looks like fallback/generic
-                issues = validate_unit_content(unit_data)
-                if issues:
-                    logger.warning(f"Unit content validation issues: {issues}. Retrying once.")
-                    retry_prompt = f"""Your previous JSON was valid but NOT acceptable for our course schema.
-
-Problems: {issues}
-
-Regenerate the FULL unit content JSON for unit: \"{unitTitleClean}\".
-
-Must-haves:
-- 8-15 screens
-- >= 2 concept-check screens
-- 1 Key Takeaways screen
-- For MCQ: 4 meaningful options, correctAnswer matches one option, include explanation and xp
-- Content must be specific to the document (mention key terms from the document)
-
-Document content:
-{document_text[:10000]}
-
-Course Learning Objectives:
-{overview_text}
-
-Unit description:
-{unitDescClean}
-
-Return ONLY the JSON object."""
-                    retry_resp = call_groq(retry_prompt, "json")
-                    retry_parsed = safe_json_loads(retry_resp)
-                    if isinstance(retry_parsed, dict) and "unit" in retry_parsed and isinstance(retry_parsed.get("unit"), dict):
-                        unit_data = retry_parsed.get("unit")
-                    else:
-                        unit_data = retry_parsed
-                    if not isinstance(unit_data, dict):
-                        raise ValueError("unit-content retry response is not a JSON object")
-                    if 'title' in unit_data:
-                        unit_data['title'] = normalize_unit_title(unit_data.get('title'))
-                    unit_data = ensure_complete_concept_checks(unit_data)
-                
-                logger.info(f"Generated unit with {len(unit_data['screens'])} screens")
-                return {"unit": unit_data, "meta": {"source": "groq"}}
-                
-            except Exception as e:
-                logger.error(f"Unit content error: {e}", exc_info=True)
-                # Fallback still returns a full multi-screen unit
-                return {"unit": build_richer_mock_unit_content(unitTitleClean, unitDescClean), "meta": {"source": "fallback", "error": str(e)}}
+            logger.info(f"'{title_clean}' -> {len(unit_data['screens'])} screens")
+            return {"sessionId": sessionId, "unit": unit_data, "meta": {"source": "ai"}}
 
         else:
             return {"error": "Invalid step"}
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Generation error: {str(e)}", exc_info=True)
-        return {"error": str(e)}
+        logger.error(f"Generation error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
-def generate_mock_units():
-    return [
-        {"title": "Foundations", "description": "Build the core ideas you’ll need for the rest of the course.", "estimatedScreens": 10},
-        {"title": "Key Concepts", "description": "Learn the main concepts with examples and simple explanations.", "estimatedScreens": 12},
-        {"title": "Practice & Checks", "description": "Reinforce learning with quick checks and applied practice.", "estimatedScreens": 14},
-        {"title": "Applications", "description": "See how the concepts are used in real scenarios.", "estimatedScreens": 12},
-        {"title": "Review", "description": "Summarize key takeaways and prepare for assessment.", "estimatedScreens": 10}
-    ]
 
-def generate_mock_unit_content(unitTitle):
-    return {
-        "title": normalize_unit_title(unitTitle),
-        "screens": [
-            {
-                "title": "What you will learn",
-                "description": "In this unit, you will:\n- Understand the main idea\n- See a simple example\n- Practice with a quick check",
-                "type": "content"
-            },
-            {
-                "title": "Core concept",
-                "description": "Definition:\nExplain the concept in simple terms.\nWhy it matters:\nConnect it to a real situation.\nCommon mistake:\nWhat learners often confuse.",
-                "type": "content"
-            },
-            {
-                "title": "Worked example",
-                "description": "Example:\nWalk through a small example step-by-step.\nKey observation:\nHighlight what to notice.\nResult:\nSummarize the outcome.",
-                "type": "content"
-            },
-            {
-                "title": "Quick Check 1",
-                "type": "concept-check",
-                "questions": [
-                    {
-                        "type": "mcq",
-                        "question": "Which statement best matches the core concept?",
-                        "options": ["Option A", "Option B", "Option C", "Option D"],
-                        "correctAnswer": "Option B",
-                        "explanation": "Option B matches the definition and example.",
-                        "xp": 5
-                    }
-                ]
-            },
-            {
-                "title": "Key Takeaways",
-                "description": "- Main idea in one line\n- Key rule or property\n- When to apply it\n- One common pitfall to avoid",
-                "type": "content"
-            },
-            {
-                "title": "Quick Check 2",
-                "type": "concept-check",
-                "questions": [
-                    {
-                        "type": "mcq",
-                        "question": "What is the best next step in the example scenario?",
-                        "options": ["A", "B", "C", "D"],
-                        "correctAnswer": "C",
-                        "explanation": "C follows from the worked example and the key rule.",
-                        "xp": 5
-                    }
-                ]
-            }
-        ]
-    }
+@app.post("/apply-feedback")
+async def apply_feedback(request: Request):
+    try:
+        data = await request.json()
+        feedback = data.get('feedback','').strip()
+        screen_content = data.get('screen_content', {})
+        if not providers:
+            raise HTTPException(status_code=503, detail="No AI providers configured")
+        if not feedback:
+            raise HTTPException(status_code=400, detail="Feedback required")
 
-def generate_mock_response(step, overview=None, unitTitle=None, unitIndex=None):
-    if step == 'overview':
-        return {
-            "sessionId": str(int(time.time() * 1000)),
-            "overview": [
-                "Learn the core concepts",
-                "Understand key principles",
-                "Master fundamental operations",
-                "Apply knowledge to solve problems"
-            ]
-        }
-    elif step == 'units':
-        return {"units": generate_mock_units()}
-    elif step == 'unit-content':
-        return {"unit": generate_mock_unit_content(unitTitle or "Sample Unit")}
-    return {"error": "Invalid step"}
+        prompt = (
+            f"Modify this course screen JSON based on the feedback.\n"
+            f"Keep the same JSON structure. Return ONLY valid JSON.\n\n"
+            f"Screen:\n{json.dumps(screen_content)[:1100]}\n\n"
+            f"Feedback: {feedback[:400]}\n\nModified JSON:"
+        )
+        response = call_ai(prompt, "json")
+        parsed = safe_json_loads(response)
+        return {"modified_screen": parsed, "message": "Feedback applied"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"apply-feedback error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/modify-generation")
+async def modify_generation(request: Request):
+    """Live feedback during active generation: add_unit | add_screen | modify_unit | remove_unit"""
+    try:
+        data = await request.json()
+        action = data.get("action","")
+        payload = data.get("payload", {})
+        if not providers:
+            raise HTTPException(status_code=503, detail="No AI providers configured")
+
+        if action == "add_unit":
+            instructions = payload.get("instructions","")
+            doc_context = payload.get("docContext","")[:500]
+            prompt = (
+                f"Generate ONE new course unit as JSON.\n"
+                f"Context: {doc_context}\nInstructions: {instructions}\n\n"
+                'Return ONLY: {"title":"unit title","description":"one sentence","estimatedScreens":6}'
+            )
+            response = call_ai(prompt, "json")
+            parsed = safe_json_loads(response)
+            if isinstance(parsed, list):
+                parsed = parsed[0]
+            return {"unit": {
+                "title": normalize_unit_title(parsed.get("title","New Unit")),
+                "description": str(parsed.get("description","")).strip() or "New unit",
+                "estimatedScreens": int(parsed.get("estimatedScreens", 6)),
+            }}
+
+        elif action == "add_screen":
+            unit_title = payload.get("unitTitle","")
+            screen_type = payload.get("screenType","content")
+            instructions = payload.get("instructions","")
+            position = payload.get("position", "after")
+            reference_screen_index = payload.get("referenceScreenIndex", 0)
+            doc_context = payload.get("docContext","")[:500]
+            
+            position_text = f" This screen should be placed {position} screen #{reference_screen_index + 1}."
+            
+            if screen_type == "concept-check":
+                prompt = (
+                    f"Generate ONE concept-check screen for unit '{unit_title}'.\n"
+                    f"Context: {doc_context}\nInstructions: {instructions}{position_text}\n\n"
+                    'Return: {"type":"concept-check","title":"Quick Check","questions":[{"type":"mcq","question":"...","options":["A","B","C","D"],"correctAnswer":"A","explanation":"...","xp":5}]}'
+                )
+            else:
+                prompt = (
+                    f"Generate ONE content screen for unit '{unit_title}'.\n"
+                    f"Context: {doc_context}\nInstructions: {instructions}{position_text}\n\n"
+                    'Return: {"type":"content","title":"Short Title","description":"Max 35 words. Example: ..."}'
+                )
+            response = call_ai(prompt, "json")
+            parsed = safe_json_loads(response)
+            if isinstance(parsed, list):
+                parsed = parsed[0]
+            if parsed.get("type") == "concept-check":
+                parsed = ensure_concept_checks({"screens":[parsed]})["screens"][0]
+            return {"screen": parsed}
+
+        elif action == "modify_screen":
+            unit_title = payload.get("unitTitle", "")
+            screen_index = payload.get("screenIndex", 0)
+            instructions = payload.get("instructions", "")
+            current_screen = payload.get("currentScreen", {})
+            
+            prompt = (
+                f"Modify this course screen based on the feedback.\n"
+                f"Unit: {unit_title}\n"
+                f"Keep the same JSON structure. Return ONLY valid JSON.\n\n"
+                f"Current Screen:\n{json.dumps(current_screen)[:1500]}\n\n"
+                f"Feedback/Instructions: {instructions}\n\n"
+                f"Modified JSON (only change what's requested, preserve everything else):"
+            )
+            response = call_ai(prompt, "json")
+            parsed = safe_json_loads(response)
+            logger.info(f"Modified screen at index {screen_index}")
+            return {"screen": parsed}
+
+        
+        elif action in ("remove_unit","reorder_units","modify_unit"):
+            return {"message": f"Action '{action}' acknowledged"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"modify-generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/reset-providers")
+async def reset_providers_ep():
+    for p in providers:
+        p["available"] = True
+        p["cooldown_until"] = 0
+    return {"status": "ok", "providers": len(providers)}
+
+@app.post("/generate-prompt")
+async def generate_prompt(request: Request):
+    """Generic endpoint for AI prompt generation"""
+    try:
+        data = await request.json()
+        prompt = data.get("prompt", "")
+        response_format = data.get("response_format", "json")
+        
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Prompt required")
+        
+        response = call_ai(prompt, response_format)
+        
+        return {"response": response}
+    except Exception as e:
+        logger.error(f"Generate prompt error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "healthy",
-        "groq_configured": bool(groq_client)
-    }
+    now = time.time()
+    return {"status": "healthy", "providers": [{
+        "name": p["name"],
+        "available": p["available"],
+        "cooling_down": not p["available"] and now < p.get("cooldown_until",0),
+        "cooldown_remaining": max(0, round(p.get("cooldown_until",0) - now)),
+    } for p in providers]}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

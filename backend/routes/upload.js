@@ -37,6 +37,18 @@ router.post('/document', protect, admin, upload.single('file'), async (req, res)
         const { originalname, filename, size, mimetype } = req.file;
         const fileType = getFileType(mimetype);
         
+        // Check if document with same name already exists and is completed
+        const existingDoc = await DocumentUpload.findOne({ 
+            originalName: originalname,
+            generationStatus: 'completed'
+        });
+        
+        if (existingDoc) {
+            return res.status(400).json({ 
+                message: 'A course has already been generated from this document. Please upload a different document.' 
+            });
+        }
+        
         const document = new DocumentUpload({
             filename,
             originalName: originalname,
@@ -45,7 +57,15 @@ router.post('/document', protect, admin, upload.single('file'), async (req, res)
             filePath: req.file.path,
             uploadedBy: req.user._id,
             extractedText: '',
-            embeddingStatus: 'pending'
+            embeddingStatus: 'pending',
+            generationStatus: 'not_started',
+            generationProgress: {
+                overview: null,
+                units: [],
+                unitContents: {},
+                completedUnits: [],
+                lastUpdated: new Date()
+            }
         });
 
         await document.save();
@@ -55,7 +75,8 @@ router.post('/document', protect, admin, upload.single('file'), async (req, res)
             document: {
                 id: document._id,
                 name: document.originalName,
-                status: document.embeddingStatus
+                status: document.embeddingStatus,
+                generationStatus: document.generationStatus
             }
         });
     } catch (error) {
@@ -76,6 +97,20 @@ router.get('/documents', protect, admin, async (req, res) => {
     }
 });
 
+// Get single document by ID
+router.get('/documents/:id', protect, admin, async (req, res) => {
+    try {
+        const document = await DocumentUpload.findById(req.params.id)
+            .select('-extractedText');
+        if (!document) {
+            return res.status(404).json({ message: 'Document not found' });
+        }
+        res.json(document);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
 // Process document
 router.post('/document/:id/process', protect, admin, async (req, res) => {
     let document;
@@ -83,6 +118,26 @@ router.post('/document/:id/process', protect, admin, async (req, res) => {
         document = await DocumentUpload.findById(req.params.id);
         if (!document) {
             return res.status(404).json({ message: 'Document not found' });
+        }
+        
+        // Check if already processed
+        if (document.embeddingStatus === 'completed') {
+            return res.status(400).json({ 
+                message: 'Document already processed. Use the existing processed content.' 
+            });
+        }
+        
+        // Check if generation is in progress or completed
+        if (document.generationStatus === 'completed') {
+            return res.status(400).json({ 
+                message: 'A course has already been generated from this document. Please upload a new document for another course.' 
+            });
+        }
+        
+        if (document.generationStatus !== 'not_started' && document.generationStatus !== 'failed') {
+            return res.status(400).json({ 
+                message: `Document is already in generation state: ${document.generationStatus}. Please continue generation instead of reprocessing.` 
+            });
         }
 
         if (!fs.existsSync(document.filePath)) {

@@ -47,16 +47,15 @@ export const adminAPI = {
 // Add AI Generation APIs
 export const aiAPI = {
   getDrafts: () => api.get('/ai/drafts').catch(error => {
-    // If 404, return empty array (endpoint not implemented yet)
-    if (error.response?.status === 404) {
-      return { data: [] };
-    }
+    if (error.response?.status === 404) return { data: [] };
     throw error;
   }),
   getDraft: (courseId) => api.get(`/ai/drafts/${courseId}`),
   updateDraft: (courseId, data) => api.put(`/ai/drafts/${courseId}`, data),
   publishDraft: (courseId) => api.post(`/ai/publish/${courseId}`),
-  deleteDraft: (courseId) => api.delete(`/ai/drafts/${courseId}`)
+  deleteDraft: (courseId) => api.delete(`/ai/drafts/${courseId}`),
+  getReviewCourse: (courseId) => api.get(`/ai/review/${courseId}`),
+  modifyGeneration: (action, payload) => api.post('/ai/modify-generation', { action, payload }),
 };
 
 // Document Upload APIs
@@ -65,8 +64,22 @@ export const documentAPI = {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
   getAll: () => api.get('/upload/documents'),
+  getById: (id) => api.get(`/upload/documents/${id}`), // Add this line
   process: (id) => api.post(`/upload/document/${id}/process`)
 };
 
+// Add response interceptor to handle 401 errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token expired or invalid
+      localStorage.clear();
+      window.location.href = '/login';
+      alert('Session expired. Please login again.');
+    }
+    return Promise.reject(error);
+  }
+);
 
 export default api;

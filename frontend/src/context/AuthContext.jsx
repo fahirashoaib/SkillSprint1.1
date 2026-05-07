@@ -13,8 +13,21 @@ export const AuthProvider = ({ children }) => {
     const userData = localStorage.getItem('user');
     
     if (token && userData) {
-      setUser(JSON.parse(userData));
+    // Optional: Decode token to check expiration
+    try {
+      const decoded = JSON.parse(atob(token.split('.')[1]));
+      if (decoded.exp * 1000 < Date.now()) {
+        // Token expired
+        localStorage.clear();
+        setUser(null);
+      } else {
+        setUser(JSON.parse(userData));
+      }
+    } catch (e) {
+      localStorage.clear();
+      setUser(null);
     }
+  }
     setLoading(false);
   }, []);
 

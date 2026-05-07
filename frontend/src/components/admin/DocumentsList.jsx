@@ -2,15 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { documentAPI, aiAPI } from '../../services/api';
 import LoadingSpinner from '../LoadingSpinner';
-import { FileText, Upload, CheckCircle, Clock, AlertCircle, Play, Zap, Eye, Edit, Trash2 } from 'lucide-react';
+import { FileText, Upload, CheckCircle, Clock, AlertCircle, Play, Zap } from 'lucide-react';
 import CourseGenerator from './CourseGenerator';
-
 
 const DocumentsList = () => {
     const [documents, setDocuments] = useState([]);
     const [loading, setLoading] = useState(true);
     const [processing, setProcessing] = useState({});
-    const [generating, setGenerating] = useState({});
     const [showUpload, setShowUpload] = useState(false);
     const [file, setFile] = useState(null);
     const [uploading, setUploading] = useState(false);
@@ -64,18 +62,11 @@ const DocumentsList = () => {
     const handleProcess = async (docId) => {
         setProcessing(prev => ({ ...prev, [docId]: true }));
         try {
-            console.log('Processing document with ID:', docId); // Debug log
-            const response = await documentAPI.process(docId);
-            console.log('Process response:', response.data);
+            await documentAPI.process(docId);
             alert('Document processed successfully!');
             loadDocuments();
         } catch (error) {
-            console.error('Process error details:', {
-                message: error.message,
-                response: error.response?.data,
-                status: error.response?.status,
-                config: error.config // This will show the URL that was called
-            });
+            console.error('Process error:', error);
             alert('Processing failed: ' + (error.response?.data?.message || error.message));
         } finally {
             setProcessing(prev => ({ ...prev, [docId]: false }));
@@ -83,6 +74,18 @@ const DocumentsList = () => {
     };
 
     const handleStartStepGeneration = (doc) => {
+        // Check if course exists and is completed (either draft or published)
+        if (doc.generatedCourseId && doc.generationStatus === 'completed') {
+            navigate(`/admin/review-course/${doc.generatedCourseId}`);
+            return;
+        }
+
+        // Check if document is processed
+        if (doc.embeddingStatus !== 'completed') {
+            alert('Please process the document first before generating a course.');
+            return;
+        }
+
         setSelectedDocument(doc);
         setShowStepGenerator(true);
     };
@@ -100,12 +103,6 @@ const DocumentsList = () => {
                     <Clock className="w-3 h-3 mr-1 animate-spin" /> Processing
                 </span>
             );
-        } else if (doc.extractedText) {
-            return (
-                <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded-full">
-                    <FileText className="w-3 h-3 mr-1" /> Text Extracted
-                </span>
-            );
         } else {
             return (
                 <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-800 bg-gray-100 rounded-full">
@@ -113,6 +110,48 @@ const DocumentsList = () => {
                 </span>
             );
         }
+    };
+
+    const getGenerationStatusBadge = (doc) => {
+        const statusConfig = {
+            'not_started': { text: 'Not Started', color: 'gray' },
+            'overview_generated': { text: 'Overview Ready', color: 'blue' },
+            'units_generated': { text: 'Units Ready', color: 'yellow' },
+            'unit_content_generating': { text: 'In Progress', color: 'orange' },
+            'completed': { text: 'Course Generated', color: 'green' },
+            'failed': { text: 'Failed', color: 'red' }
+        };
+
+        const config = statusConfig[doc.generationStatus] || statusConfig['not_started'];
+        const colorMap = {
+            gray: 'bg-gray-100 text-gray-800',
+            blue: 'bg-blue-100 text-blue-800',
+            yellow: 'bg-yellow-100 text-yellow-800',
+            orange: 'bg-orange-100 text-orange-800',
+            green: 'bg-green-100 text-green-800',
+            red: 'bg-red-100 text-red-800'
+        };
+
+        return (
+            <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full ${colorMap[config.color]}`}>
+                {config.text}
+            </span>
+        );
+    };
+
+    const getButtonText = (doc) => {
+        // Only show "View Course" if a course has actually been generated and saved
+        if (doc.generatedCourseId && doc.generationStatus === 'completed') {
+            return 'View Course';
+        }
+        // If generation is in progress or partially complete
+        if (doc.generationStatus === 'overview_generated' ||
+            doc.generationStatus === 'units_generated' ||
+            doc.generationStatus === 'unit_content_generating') {
+            return 'Resume Generation';
+        }
+        // If no generation started
+        return 'Start Generation';
     };
 
     return (
@@ -196,19 +235,19 @@ const DocumentsList = () => {
                                 </div>
                                 <div className="flex items-center space-x-2">
                                     {getStatusBadge(doc)}
+                                    {getGenerationStatusBadge(doc)}
                                 </div>
                             </div>
 
                             <div className="flex items-center space-x-3 mt-4 pt-3 border-t border-gray-100">
-                                {/* Process Button */}
                                 <button
                                     onClick={() => handleProcess(doc._id)}
                                     disabled={processing[doc._id] || doc.embeddingStatus === 'completed' || doc.embeddingStatus === 'processing'}
                                     className={`flex items-center px-3 py-1.5 rounded text-sm font-medium transition-colors ${doc.embeddingStatus === 'completed'
-                                        ? 'bg-green-100 text-green-700 cursor-not-allowed'
-                                        : doc.embeddingStatus === 'processing'
-                                            ? 'bg-yellow-100 text-yellow-700 cursor-not-allowed'
-                                            : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                                            ? 'bg-green-100 text-green-700 cursor-not-allowed'
+                                            : doc.embeddingStatus === 'processing'
+                                                ? 'bg-yellow-100 text-yellow-700 cursor-not-allowed'
+                                                : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
                                         }`}
                                 >
                                     {processing[doc._id] ? (
@@ -221,52 +260,58 @@ const DocumentsList = () => {
                                             doc.embeddingStatus === 'processing' ? 'Processing' : 'Process'}
                                 </button>
 
-                                {/* Generate Course Button */}
                                 <button
                                     onClick={() => handleStartStepGeneration(doc)}
-                                    disabled={false}
-                                    className="flex items-center px-3 py-1.5 rounded text-sm font-medium transition-colors bg-purple-100 text-purple-700 hover:bg-purple-200"
+                                    disabled={doc.embeddingStatus !== 'completed' && doc.generationStatus !== 'completed'}
+                                    className={`flex items-center px-3 py-1.5 rounded text-sm font-medium transition-colors ${doc.embeddingStatus !== 'completed' && doc.generationStatus !== 'completed'
+                                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                            : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                                        }`}
                                 >
                                     <Zap className="w-4 h-4 mr-1" />
-                                    Start Step Generation
+                                    {getButtonText(doc)}
                                 </button>
                             </div>
                         </div>
                     ))}
                 </div>
             )}
-            {/*Add modal for step generator at the bottom of the component:*/}
-            {
-                showStepGenerator && selectedDocument && (
-                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                        <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-                            <div className="p-6">
-                                <div className="flex justify-between items-center mb-4">
-                                    <h2 className="text-2xl font-bold text-gray-900">
-                                        Generate Course: {selectedDocument.originalName}
-                                    </h2>
-                                    <button
-                                        onClick={() => {
-                                            setShowStepGenerator(false);
-                                            setSelectedDocument(null);
-                                        }}
-                                        className="text-gray-400 hover:text-gray-600"
-                                    >
-                                        ✕
-                                    </button>
-                                </div>
-                                <CourseGenerator
-                                    documentId={selectedDocument._id}
-                                    documentName={selectedDocument.originalName}
-                                />
+
+            {showStepGenerator && selectedDocument && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                        <div className="p-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-2xl font-bold text-gray-900">
+                                    {selectedDocument.generationStatus === 'completed' ? 'View Course' :
+                                        selectedDocument.generationStatus === 'not_started' ? 'Generate Course' :
+                                            'Resume Course Generation'}: {selectedDocument.originalName}
+                                </h2>
+                                <button
+                                    onClick={() => {
+                                        setShowStepGenerator(false);
+                                        setSelectedDocument(null);
+                                    }}
+                                    className="text-gray-400 hover:text-gray-600"
+                                >
+                                    ✕
+                                </button>
                             </div>
+                            <CourseGenerator
+                                documentId={selectedDocument._id}
+                                documentName={selectedDocument.originalName}
+                                onClose={() => {
+                                    setShowStepGenerator(false);
+                                    setSelectedDocument(null);
+                                    loadDocuments();
+                                }}
+                            />
                         </div>
                     </div>
-                )
-            }
+                </div>
+            )}
         </div>
     );
-
 };
 
 export default DocumentsList;
