@@ -51,6 +51,10 @@ const userSchema = new mongoose.Schema({
     completed: {
       type: Boolean,
       default: false
+    },
+    xpEarned: {
+      type: Number,
+      default: 0
     }
   }]
 }, {

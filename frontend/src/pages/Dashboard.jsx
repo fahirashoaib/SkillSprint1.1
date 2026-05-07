@@ -42,7 +42,6 @@ const Dashboard = () => {
     navigate('/login');
   };
 
-
   return (
     <div className="flex h-screen bg-gray-50">
       
@@ -106,13 +105,8 @@ const Dashboard = () => {
                (isAdmin() ? 'Admin Portal' : 'SkillSprint')}
             </h1>
 
-            {/* Desktop User Menu */}
+            {/* Desktop User Menu - XP REMOVED */}
             <div className="hidden md:flex items-center space-x-4">
-              {!isAdmin() && (
-                <span className="text-sm text-gray-600">
-                  {user?.xp || 0} XP
-                </span>
-              )}
               <div className="relative">
                 <button
                   onClick={() => setShowUserMenu(!showUserMenu)}

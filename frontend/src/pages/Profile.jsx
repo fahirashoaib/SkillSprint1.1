@@ -1,3 +1,5 @@
+import { useNavigate } from 'react-router-dom';
+
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { userAPI } from '../services/api';
@@ -8,6 +10,7 @@ import { User, Mail, Award, BookOpen, Calendar, Shield, Settings } from 'lucide-
 
 const Profile = () => {
   const { user, isAdmin } = useAuth();
+  const navigate = useNavigate();
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -69,7 +72,7 @@ const Profile = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
-      
+
       <div className="max-w-4xl mx-auto px-4">
         {/* Profile Header */}
         <div className="card mb-8">
@@ -97,19 +100,19 @@ const Profile = () => {
 
         {/* Stats Grid - USING STATCARD */}
         <div className="grid md:grid-cols-3 gap-6 mb-8">
-          <StatCard 
+          <StatCard
             icon={Award}
             title="Total XP"
             value={profileData?.xp || 0}
             color="yellow"
           />
-          <StatCard 
+          <StatCard
             icon={BookOpen}
             title="Courses Completed"
             value={profileData?.completedCourses?.length || 0}
             color="blue"
           />
-          <StatCard 
+          <StatCard
             icon={Calendar}
             title="Member Since"
             value={profileData?.createdAt
@@ -118,6 +121,63 @@ const Profile = () => {
             }
             color="green"
           />
+        </div>
+
+        {/* Current Progress */}
+        <div className="card mt-8">
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">Current Progress</h2>
+          {profileData?.currentProgress && profileData.currentProgress.length > 0 ? (
+            <div className="space-y-3">
+              {(() => {
+                // Group by course and calculate progress
+                const courseMap = new Map();
+
+                profileData.currentProgress.forEach(progress => {
+                  const courseId = progress.courseId?._id || progress.courseId;
+                  if (!courseMap.has(courseId)) {
+                    courseMap.set(courseId, {
+                      courseTitle: progress.courseId?.title || 'Unknown Course',
+                      courseId: courseId,
+                      completedScreens: 0,
+                      allProgress: []
+                    });
+                  }
+                  if (progress.completed) {
+                    courseMap.get(courseId).completedScreens++;
+                  }
+                  courseMap.get(courseId).allProgress.push(progress);
+                });
+
+                // Calculate total screens per course (need to fetch)
+                return Array.from(courseMap.values()).map(course => (
+                  <div key={course.courseId} className="flex items-center justify-between p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="flex items-center space-x-3 flex-1">
+                      <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                      <div>
+                        <p className="font-medium text-gray-900">{course.courseTitle}</p>
+                        <p className="text-sm text-gray-600">
+                          {course.completedScreens} screens completed
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => navigate(`/courses/${course.courseId}`)}
+                      className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      Continue Learning
+                    </button>
+                  </div>
+                ));
+              })()}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-600">No progress tracked yet</p>
+              <p className="text-sm text-gray-500 mt-2">
+                Start a course to track your learning progress!
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Completed Courses */}
@@ -149,42 +209,6 @@ const Profile = () => {
               <a href="/courses" className="btn-primary inline-block">
                 Browse Courses
               </a>
-            </div>
-          )}
-        </div>
-
-        {/* Current Progress */}
-        <div className="card mt-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Current Progress</h2>
-          {profileData?.currentProgress && profileData.currentProgress.length > 0 ? (
-            <div className="space-y-3">
-              {profileData.currentProgress.slice(0, 5).map((progress, index) => (
-                <div key={index} className="flex items-center justify-between p-4 bg-blue-50 rounded-lg border border-blue-200">
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-3 h-3 rounded-full ${progress.completed ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
-                    <div>
-                      <p className="font-medium text-gray-900">
-                        {progress.courseId?.title || `Course ${progress.courseId}`}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        Unit {progress.unitId} • Screen {progress.screenId}
-                      </p>
-                    </div>
-                  </div>
-                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                    progress.completed ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                  }`}>
-                    {progress.completed ? 'Completed' : 'In Progress'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <p className="text-gray-600">No progress tracked yet</p>
-              <p className="text-sm text-gray-500 mt-2">
-                Start a course to track your learning progress!
-              </p>
             </div>
           )}
         </div>

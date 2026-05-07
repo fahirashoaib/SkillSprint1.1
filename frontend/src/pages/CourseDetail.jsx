@@ -1,120 +1,220 @@
 import React, { useState, useEffect } from 'react';
-import {useParams, Link } from 'react-router-dom';
-import { courseAPI } from '../services/api';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { courseAPI, userAPI } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { LoadingPage } from '../components/LoadingSpinner';
-import BackButton from '../components/BackButton';
-import DifficultyBadge from '../components/DifficultyBadge';
-import ProgressBar from '../components/ProgressBar';
+import { Clock, Trophy, BookOpen, Play, CheckCircle, RefreshCw, ArrowLeft } from 'lucide-react';
 
 const CourseDetail = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [course, setCourse] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [userProgress, setUserProgress] = useState(null);
+  const [firstIncompleteScreen, setFirstIncompleteScreen] = useState(null);
+  const [completedScreensCount, setCompletedScreensCount] = useState(0);
+  const [courseXpEarned, setCourseXpEarned] = useState(0);
+  const [totalScreens, setTotalScreens] = useState(0);
 
   useEffect(() => {
     const fetchCourse = async () => {
       try {
         const response = await courseAPI.getById(id);
         setCourse(response.data);
+
+        const total = response.data.units.reduce((sum, u) => sum + u.screens.length, 0);
+        setTotalScreens(total);
+
+        if (user?.id) {
+          const userData = await userAPI.getProfile(user.id);
+          setUserProgress(userData.data);
+
+          // Calculate completed screens for this course
+          const completed = userData.data.currentProgress?.filter(p => {
+            const pCourseId = typeof p.courseId === 'object' ? p.courseId._id : p.courseId;
+            return pCourseId === id && p.completed === true;
+          }) || [];
+          setCompletedScreensCount(completed.length);
+
+          // Calculate XP earned
+          const xpEarned = completed.reduce((sum, p) => sum + (p.xpEarned || 0), 0);
+          setCourseXpEarned(xpEarned);
+
+          // Find first incomplete screen
+          let firstIncomplete = null;
+          for (const unit of response.data.units) {
+            for (const screen of unit.screens) {
+              const isCompleted = completed.some(p =>
+                p.screenId === screen.screenId && p.unitId === unit.unitId
+              );
+              if (!isCompleted) {
+                firstIncomplete = { unitId: unit.unitId, screenId: screen.screenId };
+                break;
+              }
+            }
+            if (firstIncomplete) break;
+          }
+          setFirstIncompleteScreen(firstIncomplete);
+        }
+
       } catch (error) {
         console.error('Error fetching course:', error);
       } finally {
         setLoading(false);
       }
     };
-
     fetchCourse();
-  }, [id]);
+  }, [id, user?.id]);
+
+  const progressPercentage = totalScreens > 0 ? Math.round((completedScreensCount / totalScreens) * 100) : 0;
+  const hasStarted = completedScreensCount > 0;
+  const isCompleted = progressPercentage === 100 && totalScreens > 0;
+
+  const getStartLink = () => {
+    if (!user?.id) return `/learn/${course?._id}/${course?.units[0]?.unitId}`;
+    if (isCompleted) return `/learn/${course?._id}/${course?.units[0]?.unitId}`;
+    if (hasStarted && firstIncompleteScreen) {
+      return `/learn/${course?._id}/${firstIncompleteScreen.unitId}/${firstIncompleteScreen.screenId}`;
+    }
+    return `/learn/${course?._id}/${course?.units[0]?.unitId}`;
+  };
+
+  const getButtonText = () => {
+    if (!user?.id) return 'Start Course';
+    if (isCompleted) return 'Review Course';
+    if (hasStarted) return 'Resume Course';
+    return 'Start Course';
+  };
+
+  const getButtonIcon = () => {
+    if (hasStarted && !isCompleted) return <RefreshCw className="w-5 h-5" />;
+    return <Play className="w-5 h-5" />;
+  };
 
   if (loading) return <LoadingPage />;
+  if (!course) return <div>Course not found</div>;
 
-  if (!course) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Course not found</h2>
-          <Link to="/courses" className="btn-primary">Back to Courses</Link>
-        </div>
-      </div>
-    );
-  }
-
-  
   return (
     <div className="min-h-screen bg-gray-50 py-8">
-      <BackButton to="/courses" text="Back to Courses" />
-      
       <div className="max-w-4xl mx-auto px-4">
-        {/* Course Hero */}
-        <div className="card mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-4">{course.title}</h1>
-          <div className="flex flex-wrap gap-4 mb-6">
-            <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
-              {course.category}
+        {/* Simple Back Button - Goes to Courses page */}
+        <button
+          onClick={() => navigate('/courses')}
+          className="text-gray-500 hover:text-gray-700 mb-6 flex items-center gap-1 text-sm"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Courses
+        </button>
+
+        {/* Course Header */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+          <h1 className="text-3xl font-bold text-gray-900 mb-3">{course.title}</h1>
+          <div className="flex flex-wrap gap-3 mb-4">
+            <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">{course.category || 'General'}</span>
+            <span className={`px-3 py-1 rounded-full text-sm font-medium ${course.difficulty === 'Beginner' ? 'bg-green-100 text-green-700' :
+                course.difficulty === 'Intermediate' ? 'bg-yellow-100 text-yellow-700' :
+                  'bg-red-100 text-red-700'
+              }`}>
+              {course.difficulty || 'Beginner'}
             </span>
-            <DifficultyBadge level={course.difficulty} />
-            <span className="bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-sm font-medium">
-              ⏱️ {course.totalDuration} min
-            </span>
-            <span className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-medium">
-              ⭐ {course.totalXP} XP
-            </span>
+            <span className="flex items-center gap-1 text-gray-500 text-sm"><Clock className="w-4 h-4" /> {course.totalDuration || 45} min</span>
+            <span className="flex items-center gap-1 text-gray-500 text-sm"><Trophy className="w-4 h-4 text-yellow-500" /> {course.totalXP || 0} XP</span>
+          </div>
+
+          {/* Progress Section */}
+          {user?.id && hasStarted && (
+            <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex justify-between items-center text-sm mb-2">
+                <span className="text-blue-700 font-medium">Your Progress</span>
+                <span className="text-blue-700 font-medium">{progressPercentage}% Complete</span>
+              </div>
+              <div className="w-full bg-blue-200 rounded-full h-2">
+                <div className="bg-blue-600 h-2 rounded-full transition-all" style={{ width: `${progressPercentage}%` }} />
+              </div>
+              <div className="flex justify-between items-center mt-2 text-xs text-blue-600">
+                <span>{completedScreensCount} of {totalScreens} lessons completed</span>
+                <span>{courseXpEarned} XP earned</span>
+              </div>
+            </div>
+          )}
+
+          {/* Completed Badge */}
+          {isCompleted && (
+            <div className="mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                <span className="text-green-700 font-medium">Course Completed! 🎉</span>
+              </div>
+            </div>
+          )}
+
+          {/* Single Start/Resume Button */}
+          <div className="text-center">
+            <Link
+              to={getStartLink()}
+              className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-lg px-8 py-3 rounded-xl transition-colors shadow-lg"
+            >
+              {getButtonIcon()}
+              {getButtonText()}
+            </Link>
+            {hasStarted && !isCompleted && (
+              <p className="text-sm text-gray-500 mt-3">
+                You've completed {completedScreensCount} of {totalScreens} lessons
+              </p>
+            )}
+          </div>
+
+          {/* Learning Objectives */}
+          <div className="border-t pt-4 mt-2">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">What You'll Learn</h2>
+            <ul className="space-y-2">
+              {course.learningObjectives?.map((obj, idx) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  <span className="text-gray-700">{obj}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
 
-        {/* Learning Objectives */}
-        <div className="card mb-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Learning Objectives</h2>
-          <ul className="space-y-2">
-            {course.learningObjectives.map((objective, index) => (
-              <li key={index} className="flex items-start">
-                <span className="text-green-500 mr-3 mt-1">✓</span>
-                <span className="text-gray-700">{objective}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        {/* Course Content */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+          <h2 className="text-xl font-bold text-gray-900 mb-4">Course Content</h2>
+          <div className="space-y-3">
+            {course.units?.map((unit, idx) => {
+              let unitCompletedCount = 0;
+              let unitProgress = 0;
+              if (user?.id && userProgress) {
+                unitCompletedCount = userProgress.currentProgress?.filter(p => {
+                  const pCourseId = typeof p.courseId === 'object' ? p.courseId._id : p.courseId;
+                  return pCourseId === course._id && p.unitId === unit.unitId && p.completed === true;
+                }).length || 0;
+                unitProgress = unit.screens.length > 0 ? Math.round((unitCompletedCount / unit.screens.length) * 100) : 0;
+              }
 
-        {/* Curriculum */}
-        <div className="card">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Course Curriculum</h2>
-          <div className="space-y-4">
-            {course.units.map((unit, index) => (
-              <div key={unit.unitId} className="border border-gray-200 rounded-lg p-6 hover:border-primary-300 transition-colors">
-                <div className="flex justify-between items-start mb-3">
-                  <h3 className="text-xl font-semibold text-gray-900">
-                    Unit {index + 1}: {unit.title}
-                  </h3>
-                  <div className="flex items-center space-x-4 text-sm text-gray-600">
-                    <span>{unit.duration} min</span>
-                    <span>{unit.totalXP} XP</span>
+              return (
+                <div key={unit.unitId} className="border rounded-lg p-4 hover:border-blue-300 transition-colors">
+                  <div className="flex justify-between items-center">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <h3 className="font-semibold text-gray-900">Unit {idx + 1}: {unit.title}</h3>
+                        {unitProgress === 100 && unitCompletedCount > 0 && (
+                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✓ Complete</span>
+                        )}
+                        {unitProgress > 0 && unitProgress < 100 && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{unitProgress}%</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500">{unit.screens?.length || 0} lessons</p>
+                      {unit.displayMessage && <p className="text-sm text-gray-600 italic mt-1">"{unit.displayMessage}"</p>}
+                    </div>
                   </div>
                 </div>
-                <p className="text-gray-600 mb-4 italic">"{unit.displayMessage}"</p>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-500">
-                    {unit.screens.length} screens
-                  </span>
-                  <Link
-                    to={`/learn/${course._id}/${unit.unitId}`}
-                    className="btn-primary"
-                  >
-                    Start Unit
-                  </Link>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </div>
-
-        {/* Start Course Button */}
-        <div className="text-center mt-8">
-          <Link
-            to={`/learn/${course._id}/${course.units[0]?.unitId}`}
-            className="btn-primary text-lg px-8 py-3"
-          >
-            Start Course
-          </Link>
         </div>
       </div>
     </div>

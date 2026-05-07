@@ -109,20 +109,20 @@ router.get('/', protect, admin, async (req, res) => {
 // Get user profile
 router.get('/:id', protect, async (req, res) => {
   try {
-    // Add authorization - users can only view their own profile unless admin
     if (req.user._id.toString() !== req.params.id && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Not authorized to view this profile' });
     }
 
     const user = await User.findById(req.params.id)
-      .populate('completedCourses.courseId')
+      .populate('completedCourses.courseId', 'title totalXP')
+      .populate('currentProgress.courseId', 'title')
       .select('-password');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Format response to match frontend expectations
+    // Format response
     const profileData = {
       id: user._id,
       username: user.username,
