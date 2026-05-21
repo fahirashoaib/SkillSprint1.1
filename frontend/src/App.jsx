@@ -5,6 +5,8 @@ import ProtectedRoute from './components/ProtectedRoute';
 import CourseReview from './components/admin/CourseReview';
 import DraftsList from './components/admin/DraftsList';
 
+import UltimateColorTester from './components/UltimateColorTester';
+
 // Pages
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -16,6 +18,7 @@ import Learning from './pages/Learning';
 import Achievements from './pages/Achievements';
 import Profile from './pages/Profile';
 import AdminDashboard from './pages/AdminDashboard';
+import LeaderboardPage from './pages/Leaderboard';
 
 // New component to block admin from learner routes
 const LearnerOnlyRoute = ({ children }) => {
@@ -65,6 +68,12 @@ function App() {
                   <Achievements />
                 </LearnerOnlyRoute>
               } />
+              <Route path="leaderboard" element={
+                <LearnerOnlyRoute>
+                  <LeaderboardPage />
+                </LearnerOnlyRoute>
+              } />
+
               <Route path="profile" element={
                 <LearnerOnlyRoute>
                   <Profile />
@@ -105,6 +114,7 @@ function App() {
             {/* Catch all - redirect to home */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+        <UltimateColorTester />
         </div>
       </Router>
     </AuthProvider>

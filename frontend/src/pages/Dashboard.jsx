@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Outlet, useLocation, Link, useNavigate } from 'react-router-dom';
-import { Home, BookOpen, Trophy, Menu, X, User, LogOut, Settings } from 'lucide-react';
+import { Home, BookOpen, Trophy, Award, Menu, X, User, LogOut, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import Leaderboard from '../components/Leaderboard';
 
 const Dashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -22,7 +23,8 @@ const Dashboard = () => {
       return [
         { name: 'Home', href: '/', icon: Home },
         { name: 'Courses', href: '/courses', icon: BookOpen },
-        { name: 'Achievements', href: '/achievements', icon: Trophy },
+        { name: 'Leaderboard', href: '/leaderboard', icon: Trophy },
+        { name: 'Achievements', href: '/achievements', icon: Award },
         { name: 'Profile', href: '/profile', icon: User }
       ];
     }

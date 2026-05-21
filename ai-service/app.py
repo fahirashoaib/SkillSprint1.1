@@ -342,23 +342,34 @@ async def generate_step(
         if step == 'overview':
             prompt = (
                 f"Document:\n{compact_excerpt(doc_text, 1300)}{extra}\n\n"
-                "List 4-6 learning objectives as a JSON array of strings.\n"
-                "Each starts with an action verb. Max 12 words each.\n"
-                'Return ONLY: ["Objective 1", "Objective 2", ...]'
+                "First, classify this course into ONE of these categories:\n"
+                "- 'Computational' (programming, algorithms, data structures, software engineering, coding)\n"
+                "- 'Non-Computational' (business, design, soft skills, humanities, art, marketing)\n"
+                "- 'General' (mixed topics or unclear)\n\n"
+                "Then list 4-6 learning objectives as a JSON array of strings.\n"
+                "Each starts with an action verb. Max 12 words each.\n\n"
+                'Return ONLY a JSON object: {"category": "Category", "objectives": ["Objective 1", "Objective 2", ...]}'
             )
             response = call_ai(prompt, "json")
             parsed = safe_json_loads(response)
+            
+            # Extract category and objectives
             if isinstance(parsed, dict):
-                objectives = parsed.get("overview") or parsed.get("objectives") or list(parsed.values())[0]
+                category = parsed.get("category", "General")
+                objectives = parsed.get("objectives") or parsed.get("overview") or list(parsed.values())[0] if len(parsed.values()) > 0 else []
             else:
+                category = "General"
                 objectives = parsed
+            
             if not isinstance(objectives, list):
                 objectives = [objectives]
+            
             cleaned = [str(next(iter(o.values())) if isinstance(o, dict) else o).strip() for o in objectives if o]
             cleaned = [c for c in cleaned if c]
             if not cleaned:
                 cleaned = ["Understand core concepts", "Apply key principles", "Analyse examples", "Evaluate outcomes"]
-            return {"sessionId": sessionId or str(int(time.time()*1000)), "overview": cleaned}
+            
+            return {"sessionId": sessionId or str(int(time.time()*1000)), "overview": cleaned, "category": category}
 
         # ── Units ─────────────────────────────────────────────────────────────
         elif step == 'units':

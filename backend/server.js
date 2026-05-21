@@ -10,6 +10,7 @@ import progressRoutes from './routes/progress.js';
 import uploadRoutes from './routes/upload.js';
 import aiGenerationRoutes from './routes/aiGeneration.js';
 import prerequisiteRoutes from './routes/prerequisites.js';
+import leaderboardRoutes from './routes/leaderboard.js';
 
 const app = express();
 dotenv.config();
@@ -29,6 +30,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/ai', aiGenerationRoutes);
 app.use('/api/prerequisites', prerequisiteRoutes);
+app.use('/api/leaderboard', leaderboardRoutes);
 
 // Environment Variable Checks
 if (!process.env.JWT_SECRET || !process.env.JWT_EXPIRES_IN) {

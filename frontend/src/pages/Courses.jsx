@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { courseAPI } from '../services/api';
 import { LoadingPage } from '../components/LoadingSpinner';
 import { Clock, Trophy, BookOpen, ChevronRight, Search } from 'lucide-react';
 
 const Courses = () => {
-  const navigate = useNavigate();
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -34,20 +33,6 @@ const Courses = () => {
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-7xl mx-auto px-4">
-        {/* Simple Back Button */}
-        <button 
-          onClick={() => navigate(-1)} 
-          className="text-gray-500 hover:text-gray-700 mb-6 flex items-center gap-1 text-sm"
-        >
-          ← Back
-        </button>
-
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">All Courses</h1>
-          <p className="text-gray-600">Master new skills with our curated learning paths</p>
-        </div>
-
         {/* Search Bar */}
         <div className="mb-6 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -63,8 +48,8 @@ const Courses = () => {
         {/* Course Grid */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredCourses.map(course => (
-            <div key={course._id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow duration-300">
-              <div className="p-5">
+            <div key={course._id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow duration-300 flex flex-col h-full">
+              <div className="p-5 flex-1">
                 <div className="flex justify-between items-start mb-3">
                   <h3 className="text-xl font-bold text-gray-900 line-clamp-1">{course.title}</h3>
                   <span className={`px-2 py-1 text-xs font-medium rounded-full ${
@@ -75,17 +60,17 @@ const Courses = () => {
                     {course.difficulty || 'Beginner'}
                   </span>
                 </div>
-                
+
                 <div className="flex flex-wrap gap-3 text-sm text-gray-500 mb-3">
                   <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {course.totalDuration || 45} min</span>
                   <span className="flex items-center gap-1"><Trophy className="w-4 h-4 text-yellow-500" /> {course.totalXP || 0} XP</span>
                   <span className="flex items-center gap-1"><BookOpen className="w-4 h-4" /> {course.category || 'General'}</span>
                 </div>
-                
+
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
                   {course.learningObjectives?.[0] || 'Start your learning journey today!'}
                 </p>
-                
+
                 {course.learningObjectives && course.learningObjectives.length > 0 && (
                   <div className="mb-4">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">What you'll learn:</p>
@@ -103,11 +88,11 @@ const Courses = () => {
                   </div>
                 )}
               </div>
-              
+
               <div className="border-t border-gray-100 p-4 bg-gray-50">
                 <Link
                   to={`/courses/${course._id}`}
-                  className="flex items-center justify-between text-blue-600 hover:text-blue-700 font-medium text-sm"
+                  className="flex items-center justify-between text-gray-900 hover:text-gray-700 font-medium text-sm"
                 >
                   View Course Details
                   <ChevronRight className="w-4 h-4" />

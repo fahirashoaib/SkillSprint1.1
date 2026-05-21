@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Rocket, Target, TrendingUp, BookOpen } from 'lucide-react';
+import { Rocket, Target, TrendingUp, BookOpen, ArrowRight } from 'lucide-react';
 
 const Home = () => {
   return (
@@ -13,7 +13,7 @@ const Home = () => {
           <h3 className="text-lg font-semibold text-gray-900 mb-2">Get Started</h3>
           <p className="text-gray-600 mb-4">Begin your learning journey with our beginner-friendly courses</p>
           <Link to="/courses" className="text-blue-600 hover:text-blue-700 font-medium">
-            Browse Courses →
+            Browse Courses <ArrowRight className="w-4 h-4 inline" />
           </Link>
         </div>
 
@@ -24,7 +24,7 @@ const Home = () => {
           <h3 className="text-lg font-semibold text-gray-900 mb-2">Earn Achievements</h3>
           <p className="text-gray-600 mb-4">Track your progress and unlock achievements as you learn</p>
           <Link to="/achievements" className="text-blue-600 hover:text-blue-700 font-medium">
-            View Achievements →
+            View Achievements <ArrowRight className="w-4 h-4 inline" />
           </Link>
         </div>
 
@@ -35,7 +35,7 @@ const Home = () => {
           <h3 className="text-lg font-semibold text-gray-900 mb-2">Track Progress</h3>
           <p className="text-gray-600 mb-4">Monitor your learning journey and see your improvement</p>
           <Link to="/courses" className="text-blue-600 hover:text-blue-700 font-medium">
-            Continue Learning →
+            Continue Learning <ArrowRight className="w-4 h-4 inline" />
           </Link>
         </div>
       </div>

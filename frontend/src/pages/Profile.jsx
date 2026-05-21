@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { Flame } from 'lucide-react'
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
@@ -120,6 +121,12 @@ const Profile = () => {
               : 'N/A'
             }
             color="green"
+          />
+          <StatCard
+            icon={Flame}
+            title="Current Streak"
+            value={`${profileData?.streak || 0} ${profileData?.streak === 1 ? 'day' : 'days'}`}
+            color="orange"
           />
         </div>
 

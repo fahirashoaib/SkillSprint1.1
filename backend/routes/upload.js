@@ -167,4 +167,24 @@ router.post('/document/:id/process', protect, admin, async (req, res) => {
     }
 });
 
+// Delete document
+router.delete('/documents/:id', protect, admin, async (req, res) => {
+  try {
+    const document = await DocumentUpload.findById(req.params.id);
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+    
+    // Optional: Delete the actual file from uploads folder
+    if (fs.existsSync(document.filePath)) {
+      fs.unlinkSync(document.filePath);
+    }
+    
+    await DocumentUpload.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Document deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;

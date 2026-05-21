@@ -24,14 +24,24 @@ const Learning = () => {
   const [courseXp, setCourseXp] = useState(0);
   const [completedScreensMap, setCompletedScreensMap] = useState({});
 
-  // Check if user can access a specific screen
-  const canAccessScreen = (screenIndex, unit) => {
-    // First screen is always accessible
-    if (screenIndex === 0) return true;
+  const isUnitCompleted = (unit) => {
+    return unit.screens.every(screen => isScreenCompleted(screen.screenId, unit.unitId));
+  };
 
-    // Check if previous screen is completed
-    const previousScreen = unit.screens[screenIndex - 1];
-    return isScreenCompleted(previousScreen.screenId, unit.unitId);
+  const canAccessScreen = (unitIndex, screenIndex) => {
+    const currentUnit = course.units[unitIndex];
+    // First screen of first unit → always unlocked
+    if (unitIndex === 0 && screenIndex === 0) return true;
+
+    // First screen of a later unit → previous unit must be completed
+    if (screenIndex === 0) {
+      const prevUnit = course.units[unitIndex - 1];
+      return isUnitCompleted(prevUnit);
+    }
+
+    // Within same unit → previous screen must be completed
+    const previousScreen = currentUnit.screens[screenIndex - 1];
+    return isScreenCompleted(previousScreen.screenId, currentUnit.unitId);
   };
 
   // Helper: Refresh completed screens and XP
@@ -377,7 +387,7 @@ const Learning = () => {
             <div className="card sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto">
               <h4 className="text-md font-semibold text-gray-900 mb-3">Course Navigation</h4>
               <div className="space-y-3">
-                {course.units.map(unit => {
+                {course.units.map((unit, uIdx) => {
                   const isCurrentUnit = unit.unitId === currentUnit.unitId;
                   const completedInUnit = getCompletedInUnit(unit);
                   const totalInUnit = unit.screens.length;
@@ -396,7 +406,7 @@ const Learning = () => {
                         {unit.screens.map((screen, screenIndex) => {
                           const isCurrentScreen = isCurrentUnit && screen.screenId === currentScreen.screenId;
                           const completed = isScreenCompleted(screen.screenId, unit.unitId);
-                          const isUnlocked = screenIndex === 0 || isScreenCompleted(unit.screens[screenIndex - 1].screenId, unit.unitId);
+                          const isUnlocked = canAccessScreen(uIdx, screenIndex);
 
                           return (
                             <button

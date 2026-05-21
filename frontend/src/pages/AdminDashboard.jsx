@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from '../context/AuthContext';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { Users, BookOpen, Target, Eye, Trash2, LogOut, Mail, Calendar, Shield, Activity} from 'lucide-react';
-import {adminAPI } from '../services/api';
+import { Users, BookOpen, Target, Eye, Trash2, LogOut, Mail, Calendar, Shield, Activity } from 'lucide-react';
+import { adminAPI, aiAPI } from '../services/api';
 import DocumentsList from '../components/admin/DocumentsList';
 
 export default function AdminDashboard() {
@@ -23,6 +23,15 @@ export default function AdminDashboard() {
         loadAdminData();
     }, []);
 
+    const fetchDraftCount = async () => {
+        try {
+            const response = await aiAPI.getDrafts();
+            setDraftCount(response.data.length);
+        } catch (error) {
+            console.error('Failed to fetch drafts:', error);
+        }
+    };
+
     async function loadAdminData() {
         setLoading(true);
         setError("");
@@ -36,6 +45,7 @@ export default function AdminDashboard() {
             setStats(statsRes.data);
             setUsers(usersRes.data);
             setCourses(coursesRes.data);
+            await fetchDraftCount();
         } catch (err) {
             console.error('Admin API Error:', err);
             setError("Failed to load admin data. Please check if admin routes are implemented.");

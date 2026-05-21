@@ -277,11 +277,13 @@ router.post('/step/overview/:documentId', protect, admin, async (req, res) => {
 
     // Save overview to document
     document.generationProgress.overview = pythonResponse.data.overview;
+    document.generationProgress.category = pythonResponse.data.category || 'General';
     document.generationStatus = 'overview_generated';
     document.generationProgress.lastUpdated = new Date();
     await document.save();
 
     session.data.overview = pythonResponse.data.overview;
+    session.data.category = pythonResponse.data.category || 'General';
 
     res.json({
       sessionId: session.sessionId,
@@ -518,7 +520,7 @@ router.post('/step/save/:sessionId', protect, admin, async (req, res) => {
 
     const courseData = {
       title: title || session.documentName.replace(/\.[^/.]+$/, ""),
-      category: category || 'General',
+      category: session.data.category || 'General',
       difficulty: difficulty || 'Beginner',
       totalDuration: calculateTotalDuration(session.data.unitContents),
       totalXP: calculateTotalXP(session.data.unitContents),

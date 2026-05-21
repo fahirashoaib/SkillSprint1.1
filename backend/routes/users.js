@@ -2,6 +2,7 @@ import express from 'express';
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
 import { protect, admin } from '../middleware/auth.js';
+import { updateStreak } from '../utils/streak.js';
 const router = express.Router();
 
 // Register user
@@ -10,25 +11,25 @@ router.post('/register', async (req, res) => {
     const { username, email, password } = req.body;
 
     if (!username || !email || !password) {
-      return res.status(400).json({ 
-        message: 'Please provide username, email and password' 
+      return res.status(400).json({
+        message: 'Please provide username, email and password'
       });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ 
-        message: 'Password must be at least 6 characters' 
+    if (password.length < 8) {
+      return res.status(400).json({
+        message: 'Password must be at least 8 characters'
       });
     }
 
     // Email format validation
     const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
     if (!emailRegex.test(email)) {
-      return res.status(400).json({ 
-        message: 'Please provide a valid email' 
+      return res.status(400).json({
+        message: 'Please provide a valid email'
       });
     }
-    
+
     // Check if user exists
     const existingUser = await User.findOne({
       $or: [{ email }, { username }]
@@ -59,6 +60,7 @@ router.post('/register', async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Registration error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -74,6 +76,9 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
 
+    updateStreak(user);
+    await user.save();
+
     const token = jwt.sign(
       { id: user._id },
       process.env.JWT_SECRET,
@@ -88,7 +93,8 @@ router.post('/login', async (req, res) => {
         username: user.username,
         email: user.email,
         xp: user.xp,
-        role: user.role
+        role: user.role,
+        streak: user.streak
       }
     });
   } catch (error) {
@@ -129,6 +135,8 @@ router.get('/:id', protect, async (req, res) => {
       email: user.email,
       role: user.role,
       xp: user.xp || 0,
+      streak: user.streak || 0,
+      lastActive: user.lastActive,
       completedCourses: user.completedCourses || [],
       currentProgress: user.currentProgress || [],
       createdAt: user.createdAt
@@ -137,9 +145,9 @@ router.get('/:id', protect, async (req, res) => {
     res.json(profileData);
   } catch (error) {
     console.error('Profile fetch error:', error);
-    res.status(500).json({ 
-      message: 'Error fetching user profile', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Error fetching user profile',
+      error: error.message
     });
   }
 });

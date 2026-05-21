@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { documentAPI, aiAPI } from '../../services/api';
 import LoadingSpinner from '../LoadingSpinner';
-import { FileText, Upload, CheckCircle, Clock, AlertCircle, Play, Zap } from 'lucide-react';
+import { FileText, Upload, CheckCircle, Clock, AlertCircle, Play, Zap, Trash2 } from 'lucide-react';
 import CourseGenerator from './CourseGenerator';
 
 const DocumentsList = () => {
@@ -70,6 +70,21 @@ const DocumentsList = () => {
             alert('Processing failed: ' + (error.response?.data?.message || error.message));
         } finally {
             setProcessing(prev => ({ ...prev, [docId]: false }));
+        }
+    };
+
+    const handleDeleteDocument = async (docId, docName) => {
+        if (!window.confirm(`Delete document "${docName}"? This will also delete any associated course drafts.`)) {
+            return;
+        }
+
+        try {
+            await documentAPI.delete(docId); // You'll need to add this API method
+            alert('Document deleted successfully');
+            loadDocuments(); // Refresh the list
+        } catch (error) {
+            console.error('Delete error:', error);
+            alert('Failed to delete document: ' + (error.response?.data?.message || error.message));
         }
     };
 
@@ -244,10 +259,10 @@ const DocumentsList = () => {
                                     onClick={() => handleProcess(doc._id)}
                                     disabled={processing[doc._id] || doc.embeddingStatus === 'completed' || doc.embeddingStatus === 'processing'}
                                     className={`flex items-center px-3 py-1.5 rounded text-sm font-medium transition-colors ${doc.embeddingStatus === 'completed'
-                                            ? 'bg-green-100 text-green-700 cursor-not-allowed'
-                                            : doc.embeddingStatus === 'processing'
-                                                ? 'bg-yellow-100 text-yellow-700 cursor-not-allowed'
-                                                : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                                        ? 'bg-green-100 text-green-700 cursor-not-allowed'
+                                        : doc.embeddingStatus === 'processing'
+                                            ? 'bg-yellow-100 text-yellow-700 cursor-not-allowed'
+                                            : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
                                         }`}
                                 >
                                     {processing[doc._id] ? (
@@ -264,12 +279,19 @@ const DocumentsList = () => {
                                     onClick={() => handleStartStepGeneration(doc)}
                                     disabled={doc.embeddingStatus !== 'completed' && doc.generationStatus !== 'completed'}
                                     className={`flex items-center px-3 py-1.5 rounded text-sm font-medium transition-colors ${doc.embeddingStatus !== 'completed' && doc.generationStatus !== 'completed'
-                                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                            : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                        : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
                                         }`}
                                 >
                                     <Zap className="w-4 h-4 mr-1" />
                                     {getButtonText(doc)}
+                                </button>
+                                <button
+                                    onClick={() => handleDeleteDocument(doc._id, doc.originalName)}
+                                    className="flex items-center px-3 py-1.5 rounded text-sm font-medium bg-red-100 text-red-700 hover:bg-red-200"
+                                >
+                                    <Trash2 className="w-4 h-4 mr-1" />
+                                    Delete
                                 </button>
                             </div>
                         </div>
@@ -310,6 +332,7 @@ const DocumentsList = () => {
                     </div>
                 </div>
             )}
+
         </div>
     );
 };

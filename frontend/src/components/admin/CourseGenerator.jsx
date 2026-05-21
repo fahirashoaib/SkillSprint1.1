@@ -31,7 +31,6 @@ const FullScreenPreviewModal = ({ isOpen, onClose, content, title }) => {
   );
 };
 
-// ─── Expandable Content Card ───────────────────────────────────────────────────
 // ─── Expandable Content Card (No JSON, Just Readable Content) ──────────────────
 const ExpandableContentCard = ({ screen, screenIndex, unitIndex, onModify, onDelete }) => {
   const [expanded, setExpanded] = useState(false);
@@ -456,6 +455,7 @@ const StepCourseGenerator = ({ documentId, documentName, onClose }) => {
   const [loadingMessage, setLoadingMessage] = useState('');
   const [fullPreviewContent, setFullPreviewContent] = useState(null);
   const [fullPreviewTitle, setFullPreviewTitle] = useState('');
+  const [aiCategory, setAiCategory] = useState('General');
   
   // Modal states
   const [showScreenModal, setShowScreenModal] = useState(false);
@@ -506,7 +506,7 @@ const StepCourseGenerator = ({ documentId, documentName, onClose }) => {
     if (!sessionId) return;
     try {
       await axios.post(`http://localhost:5000/api/ai/step/save-progress/${sessionId}`,
-        { title: documentName.replace(/\.[^/.]+$/, ''), category: 'General', difficulty: 'Beginner' },
+        { title: documentName.replace(/\.[^/.]+$/, ''), category: aiCategory, difficulty: 'Beginner' },
         { headers: authHeader() });
     } catch (err) { console.warn('Save failed:', err.message); }
   };
@@ -518,6 +518,7 @@ const StepCourseGenerator = ({ documentId, documentName, onClose }) => {
         { headers: authHeader(), timeout: 90000 });
       setSessionId(res.data.sessionId);
       setOverview(Array.isArray(res.data.overview) ? res.data.overview : [res.data.overview]);
+      setAiCategory(res.data.category || 'General');
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to generate overview');
     } finally { setLoading(false); setLoadingMessage(''); }
@@ -752,7 +753,7 @@ const StepCourseGenerator = ({ documentId, documentName, onClose }) => {
     setLoading(true);
     try {
       const res = await axios.post(`http://localhost:5000/api/ai/step/save/${sessionId}`,
-        { title: documentName.replace(/\.[^/.]+$/, ''), category: 'General', difficulty: 'Beginner' },
+        { title: documentName.replace(/\.[^/.]+$/, ''), category: aiCategory, difficulty: 'Beginner' },
         { headers: authHeader() });
       if (onClose) onClose();
       navigate(`/admin/review-course/${res.data.courseId}`);
@@ -768,7 +769,7 @@ const StepCourseGenerator = ({ documentId, documentName, onClose }) => {
     setLoading(true);
     try {
       const res = await axios.post(`http://localhost:5000/api/ai/step/save-progress/${sessionId}`,
-        { title: documentName.replace(/\.[^/.]+$/, ''), category: 'General', difficulty: 'Beginner' },
+        { title: documentName.replace(/\.[^/.]+$/, ''), category: aiCategory, difficulty: 'Beginner' },
         { headers: authHeader() });
       if (onClose) onClose();
       navigate(`/admin/review-course/${res.data.courseId}`);

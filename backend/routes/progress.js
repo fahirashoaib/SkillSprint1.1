@@ -1,5 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
+import { updateStreak } from '../utils/streak.js';
 import { protect } from '../middleware/auth.js';
 const router = express.Router();
 
@@ -9,7 +10,7 @@ router.post('/:userId', protect, async (req, res) => {
     if (req.user._id.toString() !== req.params.userId && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Not authorized to update this user' });
     }
-    
+
     const { courseId, unitId, screenId, completed, xpEarned } = req.body;
 
     const user = await User.findById(req.params.userId);
@@ -43,6 +44,11 @@ router.post('/:userId', protect, async (req, res) => {
       });
     }
 
+    // Update streak when screen is completed
+    if (completed) {
+      updateStreak(user);
+    }
+
     await user.save();
 
     const updatedUser = await User.findById(req.params.userId)
@@ -53,9 +59,10 @@ router.post('/:userId', protect, async (req, res) => {
       message: 'Progress updated successfully',
       xp: user.xp,
       progress: user.currentProgress,
-      user: updatedUser
+      user: updatedUser,
+      streak: user.streak
     });
-    
+
   } catch (error) {
     console.error('Progress update error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -68,7 +75,7 @@ router.post('/:userId/complete-course', protect, async (req, res) => {
     if (req.user._id.toString() !== req.params.userId && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Not authorized' });
     }
-    
+
     const { courseId } = req.body;
     const user = await User.findById(req.params.userId);
     if (!user) {

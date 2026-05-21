@@ -64,8 +64,9 @@ export const documentAPI = {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
   getAll: () => api.get('/upload/documents'),
-  getById: (id) => api.get(`/upload/documents/${id}`), // Add this line
-  process: (id) => api.post(`/upload/document/${id}/process`)
+  getById: (id) => api.get(`/upload/documents/${id}`),
+  process: (id) => api.post(`/upload/document/${id}/process`),
+  delete: (id) => api.delete(`/upload/documents/${id}`)
 };
 
 // Add response interceptor to handle 401 errors
