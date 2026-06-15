@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { protect, admin } from '../middleware/auth.js';
 import DocumentUpload from '../models/DocumentUpload.js';
-import { extractText} from '../services/documentProcessor.js';
+import { extractText, chunkText } from '../services/documentProcessor.js';
 import fs from 'fs';
 
 const router = express.Router();
@@ -148,14 +148,21 @@ router.post('/document/:id/process', protect, admin, async (req, res) => {
         await document.save();
 
         const extractedText = await extractText(document.filePath, document.fileType);
+        const chunks = chunkText(extractedText);
         
         document.extractedText = extractedText;
+        document.chunkCount = chunks.length;
+        document.metadata = {
+          ...document.metadata,
+          wordCount: extractedText.split(/\s+/).filter(Boolean).length
+        };
         document.embeddingStatus = 'completed';
         await document.save();
 
         res.json({
             message: 'Document processed successfully',
-            textLength: extractedText.length
+            textLength: extractedText.length,
+            chunkCount: chunks.length
         });
     } catch (error) {
         console.error('Processing error:', error);

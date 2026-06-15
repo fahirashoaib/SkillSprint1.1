@@ -7,6 +7,7 @@ import FormData from 'form-data';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getContextForStep } from '../services/documentProcessor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,6 +20,51 @@ const generationSessions = {};
 // Helper function to normalize file path
 const normalizeFilePath = (filePath) => {
   return filePath.replace(/\\/g, '/');
+};
+
+const buildGenerationFormData = (document, step, extras = {}) => {
+  if (!document.extractedText?.trim()) {
+    throw new Error('Document must be processed before generation. Please process the document first.');
+  }
+
+  const formData = new FormData();
+  const documentContext = getContextForStep(document.extractedText, step, {
+    unitIndex: extras.unitIndex ?? 0,
+    totalUnits: extras.totalUnits ?? 1
+  });
+
+  formData.append('documentText', documentContext);
+  formData.append('step', step);
+
+  if (extras.sessionId) formData.append('sessionId', extras.sessionId);
+  if (extras.overview !== undefined) {
+    const overviewValue = Array.isArray(extras.overview)
+      ? JSON.stringify(extras.overview)
+      : extras.overview;
+    formData.append('overview', overviewValue);
+  }
+  if (extras.unitIndex !== undefined) formData.append('unitIndex', String(extras.unitIndex));
+  if (extras.unitTitle) formData.append('unitTitle', extras.unitTitle);
+  if (extras.unitDescription !== undefined) {
+    formData.append('unitDescription', extras.unitDescription || '');
+  }
+  if (extras.feedbackInstructions) {
+    formData.append('feedbackInstructions', extras.feedbackInstructions);
+  }
+
+  // Attach file as fallback when AI service needs to re-extract
+  let filePath = document.filePath;
+  if (!fs.existsSync(filePath)) {
+    const absolutePath = path.join(process.cwd(), filePath);
+    if (fs.existsSync(absolutePath)) {
+      filePath = absolutePath;
+    }
+  }
+  if (fs.existsSync(filePath)) {
+    formData.append('file', fs.createReadStream(normalizeFilePath(filePath)));
+  }
+
+  return formData;
 };
 
 // Helper function to check if Python service is running
@@ -35,11 +81,11 @@ const checkPythonService = async () => {
 // Helper function to get or create generation session
 const getOrCreateGenerationSession = async (documentId, userId) => {
   const document = await DocumentUpload.findById(documentId);
-  
+
   if (!document) {
     throw new Error('Document not found');
   }
-  
+
   // Check if session exists in memory
   if (document.generationSessionId && generationSessions[document.generationSessionId]) {
     const session = generationSessions[document.generationSessionId];
@@ -48,10 +94,10 @@ const getOrCreateGenerationSession = async (documentId, userId) => {
     }
     return session;
   }
-  
+
   // Create new session
   const sessionId = Date.now().toString();
-  
+
   // Convert stored unitContents from object to array
   let unitContentsArray = [];
   if (document.generationProgress?.unitContents) {
@@ -61,7 +107,7 @@ const getOrCreateGenerationSession = async (documentId, userId) => {
       unitContentsArray = document.generationProgress.unitContents;
     }
   }
-  
+
   const newSession = {
     sessionId,
     documentId: document._id,
@@ -77,16 +123,16 @@ const getOrCreateGenerationSession = async (documentId, userId) => {
     },
     createdAt: new Date()
   };
-  
+
   generationSessions[sessionId] = newSession;
-  
+
   // Update document with session info
   document.generationSessionId = sessionId;
   if (document.generationStatus === 'not_started') {
     document.generationStatus = 'overview_generated';
   }
   await document.save();
-  
+
   return newSession;
 };
 
@@ -172,7 +218,7 @@ router.post('/step/recover/:documentId', protect, admin, async (req, res) => {
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
     }
-    
+
     // Create new session from document data
     const sessionId = Date.now().toString();
     const newSession = {
@@ -190,11 +236,11 @@ router.post('/step/recover/:documentId', protect, admin, async (req, res) => {
       },
       createdAt: new Date()
     };
-    
+
     generationSessions[sessionId] = newSession;
     document.generationSessionId = sessionId;
     await document.save();
-    
+
     res.json({ sessionId, message: 'Session recovered' });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -208,7 +254,7 @@ router.post('/step/overview/:documentId', protect, admin, async (req, res) => {
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
     }
-    
+
     // Check if overview already exists
     if (document.generationProgress?.overview) {
       const session = await getOrCreateGenerationSession(req.params.documentId, req.user._id);
@@ -218,14 +264,14 @@ router.post('/step/overview/:documentId', protect, admin, async (req, res) => {
         message: 'Resuming from existing overview'
       });
     }
-    
+
     // Check if document is already completed
     if (document.generationStatus === 'completed') {
-      return res.status(400).json({ 
-        message: 'A course has already been generated from this document.' 
+      return res.status(400).json({
+        message: 'A course has already been generated from this document.'
       });
     }
-    
+
     const isPythonRunning = await checkPythonService();
     if (!isPythonRunning) {
       return res.status(503).json({
@@ -233,25 +279,24 @@ router.post('/step/overview/:documentId', protect, admin, async (req, res) => {
       });
     }
 
-    let filePath = document.filePath;
-    if (!fs.existsSync(filePath)) {
-      const absolutePath = path.join(process.cwd(), filePath);
-      if (!fs.existsSync(absolutePath)) {
-        return res.status(404).json({ message: 'File not found on server' });
-      }
-      filePath = absolutePath;
+    if (!document.extractedText?.trim()) {
+      return res.status(400).json({
+        message: 'Document has not been processed yet. Please process the document before generating a course.'
+      });
     }
 
-    filePath = normalizeFilePath(filePath);
-    console.log('Sending to Python service:', filePath);
+    console.log('Sending chunked document context to Python service:', {
+      documentId: document._id,
+      textLength: document.extractedText.length,
+      chunkCount: document.chunkCount || 'unknown'
+    });
 
     // IMPORTANT: Create session FIRST before calling Python
     const session = await getOrCreateGenerationSession(req.params.documentId, req.user._id);
 
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(filePath));
-    formData.append('step', 'overview');
-    formData.append('sessionId', session.sessionId);
+    const formData = buildGenerationFormData(document, 'overview', {
+      sessionId: session.sessionId
+    });
 
     const pythonResponse = await axios.post(
       'http://localhost:8000/generate-step',
@@ -267,12 +312,20 @@ router.post('/step/overview/:documentId', protect, admin, async (req, res) => {
       }
     );
 
+    // ✅ FIX: Check if response exists
+    if (!pythonResponse || !pythonResponse.data) {
+      return res.status(500).json({ message: 'No response from AI service' });
+    }
+
+    // ✅ FIX: Check for error in response
     if (pythonResponse.data.error) {
       return res.status(500).json({ message: pythonResponse.data.error });
     }
 
+    // ✅ FIX: Check if overview exists
     if (!pythonResponse.data.overview) {
-      return res.status(500).json({ message: 'Invalid response from AI service' });
+      console.error('Python response missing overview:', pythonResponse.data);
+      return res.status(500).json({ message: 'Invalid response from AI service: missing overview' });
     }
 
     // Save overview to document
@@ -309,7 +362,7 @@ router.post('/step/units/:sessionId', protect, admin, async (req, res) => {
     }
 
     const document = await DocumentUpload.findById(session.documentId);
-    
+
     // Check if units already exist
     if (document.generationProgress?.units && document.generationProgress.units.length > 0) {
       session.data.units = document.generationProgress.units;
@@ -319,32 +372,20 @@ router.post('/step/units/:sessionId', protect, admin, async (req, res) => {
         message: 'Resuming from existing units'
       });
     }
-    
+
     // Check if already completed
     if (document.generationStatus === 'completed') {
-      return res.status(400).json({ 
-        message: 'This document has already been processed completely.' 
+      return res.status(400).json({
+        message: 'This document has already been processed completely.'
       });
     }
 
     session.data.overview = overview;
 
-    let filePath = session.documentPath;
-    if (!fs.existsSync(filePath)) {
-      const absolutePath = path.join(process.cwd(), filePath);
-      if (!fs.existsSync(absolutePath)) {
-        return res.status(404).json({ message: 'File not found on server' });
-      }
-      filePath = absolutePath;
-    }
-
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(filePath));
-    formData.append('step', 'units');
-    formData.append('sessionId', sessionId);
-    
-    const overviewValue = Array.isArray(overview) ? JSON.stringify(overview) : overview;
-    formData.append('overview', overviewValue);
+    const formData = buildGenerationFormData(document, 'units', {
+      sessionId,
+      overview
+    });
 
     console.log('Sending units request for session:', sessionId);
 
@@ -367,7 +408,7 @@ router.post('/step/units/:sessionId', protect, admin, async (req, res) => {
     document.generationStatus = 'units_generated';
     document.generationProgress.lastUpdated = new Date();
     await document.save();
-    
+
     session.data.unitContents = new Array(pythonResponse.data.units.length).fill(null);
 
     console.log(`Generated ${pythonResponse.data.units.length} units for session ${sessionId}`);
@@ -397,7 +438,7 @@ router.post('/step/unit-content/:sessionId/:unitIndex', protect, admin, async (r
     }
 
     const document = await DocumentUpload.findById(session.documentId);
-    
+
     // Check if this unit was already generated
     const completedUnits = document.generationProgress?.completedUnits || [];
     if (completedUnits.includes(index)) {
@@ -411,10 +452,10 @@ router.post('/step/unit-content/:sessionId/:unitIndex', protect, admin, async (r
         });
       }
     }
-    
+
     if (document.generationStatus === 'completed') {
-      return res.status(400).json({ 
-        message: 'This document has already been fully processed.' 
+      return res.status(400).json({
+        message: 'This document has already been fully processed.'
       });
     }
 
@@ -422,33 +463,24 @@ router.post('/step/unit-content/:sessionId/:unitIndex', protect, admin, async (r
       return res.status(400).json({ message: 'No units found. Please generate units first.' });
     }
 
-    let filePath = session.documentPath;
-    if (!fs.existsSync(filePath)) {
-      const absolutePath = path.join(process.cwd(), filePath);
-      if (!fs.existsSync(absolutePath)) {
-        return res.status(404).json({ message: 'File not found on server' });
-      }
-      filePath = absolutePath;
+    if (!document.extractedText?.trim()) {
+      return res.status(400).json({
+        message: 'Document has not been processed yet. Please process the document before generating unit content.'
+      });
     }
 
     document.generationStatus = 'unit_content_generating';
     await document.save();
 
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(filePath));
-    formData.append('step', 'unit-content');
-    formData.append('unitIndex', unitIndex);
-    formData.append('unitTitle', unitTitle);
-    formData.append('unitDescription', unitDescription || '');
-    formData.append('sessionId', sessionId);
-    if (req.body.feedbackInstructions) {
-      formData.append('feedbackInstructions', req.body.feedbackInstructions);
-    }
-    
-    const overviewValue = Array.isArray(session.data.overview) 
-      ? JSON.stringify(session.data.overview) 
-      : session.data.overview;
-    formData.append('overview', overviewValue);
+    const formData = buildGenerationFormData(document, 'unit-content', {
+      sessionId,
+      unitIndex: index,
+      totalUnits: session.data.units.length,
+      unitTitle,
+      unitDescription,
+      overview: session.data.overview,
+      feedbackInstructions: req.body.feedbackInstructions
+    });
 
     console.log(`Generating content for unit ${index + 1} in session ${sessionId}`);
 
@@ -470,18 +502,18 @@ router.post('/step/unit-content/:sessionId/:unitIndex', protect, admin, async (r
       session.data.unitContents = [];
     }
     session.data.unitContents[index] = pythonResponse.data.unit;
-    
+
     // Save to document
     if (!document.generationProgress.unitContents) {
       document.generationProgress.unitContents = {};
     }
     document.generationProgress.unitContents[index.toString()] = pythonResponse.data.unit;
-    
+
     if (!completedUnits.includes(index)) {
       completedUnits.push(index);
       document.generationProgress.completedUnits = completedUnits;
     }
-    
+
     document.generationProgress.lastUpdated = new Date();
     await document.save();
 
@@ -609,17 +641,17 @@ router.post('/step/save-progress/:sessionId', protect, admin, async (req, res) =
     const { title, category, difficulty } = req.body;
 
     let session = generationSessions[sessionId];
-    
+
     // If session not found in memory, try to recover from database
     if (!session) {
       console.log(`Session ${sessionId} not found in memory, attempting to recover from database...`);
-      
+
       // Find document by sessionId
       const document = await DocumentUpload.findOne({ generationSessionId: sessionId });
       if (!document) {
         return res.status(404).json({ message: 'Session not found and could not recover from database' });
       }
-      
+
       // Recreate session from document data
       let unitContentsArray = [];
       if (document.generationProgress?.unitContents) {
@@ -629,7 +661,7 @@ router.post('/step/save-progress/:sessionId', protect, admin, async (req, res) =
           unitContentsArray = document.generationProgress.unitContents;
         }
       }
-      
+
       session = {
         sessionId,
         documentId: document._id,
@@ -645,7 +677,7 @@ router.post('/step/save-progress/:sessionId', protect, admin, async (req, res) =
         },
         createdAt: new Date()
       };
-      
+
       generationSessions[sessionId] = session;
       console.log(`Session ${sessionId} recovered successfully`);
     }
@@ -756,11 +788,11 @@ router.get('/drafts/:courseId', protect, admin, async (req, res) => {
     const course = await Course.findById(req.params.courseId)
       .populate('generatedFrom', 'originalName')
       .populate('generatedBy', 'username');
-    
+
     if (!course) {
       return res.status(404).json({ message: 'Course not found' });
     }
-    
+
     res.json(course);
   } catch (error) {
     console.error('Get course error:', error.message);
@@ -792,11 +824,11 @@ router.get('/review/:courseId', protect, admin, async (req, res) => {
     const course = await Course.findById(req.params.courseId)
       .populate('generatedFrom', 'originalName')
       .populate('generatedBy', 'username');
-    
+
     if (!course) {
       return res.status(404).json({ message: 'Course not found' });
     }
-    
+
     res.json(course);
   } catch (error) {
     console.error('Get review course error:', error.message);
@@ -839,28 +871,28 @@ router.post('/apply-feedback/:courseId', protect, admin, async (req, res) => {
   try {
     const { courseId } = req.params;
     const { unitIndex, screenIndex, feedback, screenContent, unitTitle, screenTitle, screenType } = req.body;
-    
+
     if (!feedback || feedback.trim() === '') {
       return res.status(400).json({ message: 'Feedback is required' });
     }
-    
+
     const course = await Course.findById(courseId);
     if (!course) {
       return res.status(404).json({ message: 'Course not found' });
     }
-    
+
     const document = await DocumentUpload.findById(course.generatedFrom);
     if (!document || !document.extractedText) {
       return res.status(404).json({ message: 'Source document not found' });
     }
-    
+
     const isPythonRunning = await checkPythonService();
     if (!isPythonRunning) {
       return res.status(503).json({
         message: 'AI service is not running. Please start the Python server on port 8000.'
       });
     }
-    
+
     const response = await axios.post(
       'http://localhost:8000/apply-feedback',
       {
@@ -878,25 +910,25 @@ router.post('/apply-feedback/:courseId', protect, admin, async (req, res) => {
         timeout: 60000
       }
     );
-    
+
     if (response.data.error) {
       return res.status(500).json({ message: response.data.error });
     }
-    
+
     // Update the specific screen in the course
     const updatedCourse = course.toObject();
     if (updatedCourse.units[unitIndex] && updatedCourse.units[unitIndex].screens[screenIndex]) {
       updatedCourse.units[unitIndex].screens[screenIndex] = response.data.modified_screen;
     }
-    
+
     const savedCourse = await Course.findByIdAndUpdate(courseId, updatedCourse, { new: true });
-    
+
     res.json({
       message: 'Feedback applied successfully',
       modifiedScreen: response.data.modified_screen,
       course: savedCourse
     });
-    
+
   } catch (error) {
     console.error('Apply feedback error:', error);
     res.status(500).json({ message: error.message });
@@ -933,7 +965,7 @@ router.post('/modify-generation', protect, admin, async (req, res) => {
 router.post('/suggest-improvement/:courseId', protect, admin, async (req, res) => {
   try {
     const { fieldType, currentValue, feedback, context } = req.body;
-    
+
     let prompt = '';
     switch (fieldType) {
       case 'course_title':
@@ -987,7 +1019,7 @@ Return ONLY: {"description": "Improved description"}`;
       { prompt, response_format: 'json' },
       { timeout: 30000 }
     );
-    
+
     let suggestion = pythonResponse.data.response;
     try {
       const parsed = JSON.parse(suggestion);
@@ -995,7 +1027,7 @@ Return ONLY: {"description": "Improved description"}`;
     } catch (e) {
       // Keep as is if not JSON
     }
-    
+
     res.json({ suggestion });
   } catch (error) {
     console.error('Suggestion error:', error);
@@ -1007,7 +1039,7 @@ Return ONLY: {"description": "Improved description"}`;
 router.post('/improve-field/:courseId', protect, admin, async (req, res) => {
   try {
     const { fieldType, currentValue, feedback, context } = req.body;
-    
+
     let prompt = '';
     switch (fieldType) {
       case 'course_title':
@@ -1052,14 +1084,14 @@ Return ONLY: {"description": "Improved description"}`;
       { prompt, response_format: 'json' },
       { timeout: 30000 }
     );
-    
+
     let result = pythonResponse.data.response;
     try {
       result = JSON.parse(result);
     } catch (e) {
       result = { result };
     }
-    
+
     res.json({ result });
   } catch (error) {
     console.error('Improve field error:', error);

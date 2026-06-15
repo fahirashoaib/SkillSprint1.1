@@ -51,6 +51,96 @@ const loadPdfParse = async () => {
   throw new Error('Could not load pdf-parse using any method');
 };
 
+const DEFAULT_CHUNK_SIZE = 2000;
+const DEFAULT_CHUNK_OVERLAP = 200;
+
+/**
+ * Split text into overlapping chunks for AI context windows.
+ */
+export const chunkText = (text, chunkSize = DEFAULT_CHUNK_SIZE, overlap = DEFAULT_CHUNK_OVERLAP) => {
+  const normalized = (text || '').trim();
+  if (!normalized) return [];
+
+  if (normalized.length <= chunkSize) {
+    return [normalized];
+  }
+
+  const chunks = [];
+  let start = 0;
+
+  while (start < normalized.length) {
+    let end = Math.min(start + chunkSize, normalized.length);
+
+    if (end < normalized.length) {
+      const slice = normalized.slice(start, end);
+      const breakAt = Math.max(
+        slice.lastIndexOf('\n\n'),
+        slice.lastIndexOf('. '),
+        slice.lastIndexOf(' ')
+      );
+      if (breakAt > chunkSize * 0.5) {
+        end = start + breakAt + (slice[breakAt] === ' ' ? 1 : 2);
+      }
+    }
+
+    const chunk = normalized.slice(start, end).trim();
+    if (chunk) chunks.push(chunk);
+
+    if (end >= normalized.length) break;
+    start = Math.max(end - overlap, start + 1);
+  }
+
+  return chunks;
+};
+
+/**
+ * Build step-appropriate context from the full document text.
+ */
+export const getContextForStep = (text, step, { unitIndex = 0, totalUnits = 1, maxLen = 2400 } = {}) => {
+  const chunks = chunkText(text);
+  if (!chunks.length) return '';
+
+  const joinParts = (parts) => {
+    const joined = parts.filter(Boolean).join('\n\n---\n\n');
+    if (joined.length <= maxLen) return joined;
+    return joined.slice(0, maxLen);
+  };
+
+  if (step === 'overview') {
+    const indices = new Set([0]);
+    if (chunks.length > 2) indices.add(Math.floor(chunks.length / 2));
+    if (chunks.length > 1) indices.add(chunks.length - 1);
+    return joinParts([...indices].sort((a, b) => a - b).map((i) => chunks[i]));
+  }
+
+  if (step === 'units') {
+    const sampleCount = Math.min(chunks.length, 5);
+    const stepSize = Math.max(1, Math.floor(chunks.length / sampleCount));
+    const parts = [];
+    for (let i = 0; i < chunks.length && parts.length < sampleCount; i += stepSize) {
+      parts.push(chunks[i]);
+    }
+    if (parts[parts.length - 1] !== chunks[chunks.length - 1]) {
+      parts.push(chunks[chunks.length - 1]);
+    }
+    return joinParts(parts);
+  }
+
+  if (step === 'unit-content') {
+    const safeTotal = Math.max(1, totalUnits);
+    const primaryIndex = Math.min(
+      chunks.length - 1,
+      Math.floor((unitIndex / safeTotal) * chunks.length)
+    );
+    const parts = [chunks[primaryIndex]];
+    if (primaryIndex > 0) parts.unshift(chunks[primaryIndex - 1]);
+    if (primaryIndex < chunks.length - 1) parts.push(chunks[primaryIndex + 1]);
+    return joinParts(parts);
+  }
+
+  return chunks[0].slice(0, maxLen);
+};
+
 export const extractText = async (filePath, fileType) => {
   try {
     // Check if file exists

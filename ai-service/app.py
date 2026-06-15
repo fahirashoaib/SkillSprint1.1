@@ -99,8 +99,9 @@ def call_provider(provider, prompt, response_format):
 def call_ai_with_fallback(prompt: str, response_format: str = "text") -> str:
     if not providers:
         raise HTTPException(status_code=503, detail="No AI providers configured")
-    if len(prompt) > 2800:
-        prompt = prompt[:2800]
+    # Context is pre-chunked by the backend; allow larger prompts than the old 2800 cap
+    if len(prompt) > 8000:
+        prompt = prompt[:8000]
     errors = []
     for attempt in range(len(providers) * 3):
         try:
@@ -136,9 +137,9 @@ def extract_text_from_pdf(file_bytes):
     try:
         pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
         text = ""
-        for page in pdf_reader.pages[:8]:
+        for page in pdf_reader.pages:
             text += page.extract_text() or ""
-        return re.sub(r'\s+', ' ', text)[:4000]
+        return re.sub(r'\s+', ' ', text).strip()
     except Exception as e:
         logger.error(f"PDF extraction error: {e}")
         raise
@@ -147,8 +148,8 @@ def extract_text_from_pdf(file_bytes):
 def extract_text_from_docx(file_bytes):
     try:
         doc = docx.Document(io.BytesIO(file_bytes))
-        text = "\n".join(p.text for p in doc.paragraphs[:40])
-        return re.sub(r'\s+', ' ', text)[:4000]
+        text = "\n".join(p.text for p in doc.paragraphs)
+        return re.sub(r'\s+', ' ', text).strip()
     except Exception as e:
         logger.error(f"DOCX extraction error: {e}")
         raise
@@ -311,9 +312,10 @@ app.add_middleware(
 
 @app.post("/generate-step")
 async def generate_step(
-    file: UploadFile = File(...),
     step: str = Form(...),
     sessionId: Optional[str] = Form(None),
+    documentText: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
     overview: Optional[str] = Form(None),
     unitIndex: Optional[str] = Form(None),
     unitTitle: Optional[str] = Form(None),
@@ -321,17 +323,25 @@ async def generate_step(
     feedbackInstructions: Optional[str] = Form(None),
 ):
     try:
-        logger.info(f"Step={step} file={file.filename}")
-        contents = await file.read()
-        if file.filename.lower().endswith('.pdf'):
-            doc_text = extract_text_from_pdf(contents)
-        elif file.filename.lower().endswith('.docx'):
-            doc_text = extract_text_from_docx(contents)
-        else:
-            doc_text = contents.decode('utf-8', errors='ignore')[:4000]
+        logger.info(f"Step={step} file={file.filename if file else 'none'}")
+        doc_text = (documentText or "").strip()
+
+        if not doc_text and file:
+            contents = await file.read()
+            if file.filename.lower().endswith('.pdf'):
+                doc_text = extract_text_from_pdf(contents)
+            elif file.filename.lower().endswith('.docx'):
+                doc_text = extract_text_from_docx(contents)
+            else:
+                doc_text = contents.decode('utf-8', errors='ignore').strip()
 
         if not doc_text:
-            raise HTTPException(status_code=400, detail="Could not extract text from document")
+            raise HTTPException(
+                status_code=400,
+                detail="No document text available. Process the document before generating."
+            )
+
+        logger.info(f"Using document context: {len(doc_text)} characters")
         if not providers:
             raise HTTPException(status_code=503, detail="No AI providers configured")
 
@@ -341,40 +351,61 @@ async def generate_step(
         # ── Overview ──────────────────────────────────────────────────────────
         if step == 'overview':
             prompt = (
-                f"Document:\n{compact_excerpt(doc_text, 1300)}{extra}\n\n"
-                "First, classify this course into ONE of these categories:\n"
-                "- 'Computational' (programming, algorithms, data structures, software engineering, coding)\n"
-                "- 'Non-Computational' (business, design, soft skills, humanities, art, marketing)\n"
-                "- 'General' (mixed topics or unclear)\n\n"
-                "Then list 4-6 learning objectives as a JSON array of strings.\n"
-                "Each starts with an action verb. Max 12 words each.\n\n"
-                'Return ONLY a JSON object: {"category": "Category", "objectives": ["Objective 1", "Objective 2", ...]}'
-            )
+            f"Document:\n{doc_text}{extra}\n\n"
+            "You MUST respond with a JSON object containing exactly two keys: 'category' and 'objectives'.\n\n"
+            "Step 1: Choose ONE category from these options:\n"
+            "- Computational\n"
+            "- Non-Computational\n"
+            "- General\n\n"
+            "Step 2: Write 4-6 learning objectives as an array of strings.\n\n"
+            "Example of correct response format:\n"
+            '{"category": "Computational", "objectives": ["Learn to write code", "Understand algorithms", "Master data structures"]}\n\n'
+            "Do NOT respond with only an array. Do NOT add any text outside the JSON object.\n\n"
+            "Now respond with valid JSON only:"
+        )
             response = call_ai(prompt, "json")
+            logger.info(f"Overview AI response length: {len(response or '')}")
             parsed = safe_json_loads(response)
-            
-            # Extract category and objectives
-            if isinstance(parsed, dict):
+
+            # Handle both response formats
+            if isinstance(parsed, list):
+                text_lower = doc_text.lower()
+                if any(word in text_lower for word in ['programming', 'algorithm', 'array', 'stack', 'queue', 'tree', 'code', 'function']):
+                    category = "Computational"
+                elif any(word in text_lower for word in ['business', 'marketing', 'design', 'management', 'leadership']):
+                    category = "Non-Computational"
+                else:
+                    category = "General"
+                objectives = parsed
+            elif isinstance(parsed, dict):
                 category = parsed.get("category", "General")
-                objectives = parsed.get("objectives") or parsed.get("overview") or list(parsed.values())[0] if len(parsed.values()) > 0 else []
+                objectives = parsed.get("objectives") or parsed.get("overview") or []
             else:
                 category = "General"
-                objectives = parsed
-            
+                objectives = []
+
             if not isinstance(objectives, list):
-                objectives = [objectives]
-            
-            cleaned = [str(next(iter(o.values())) if isinstance(o, dict) else o).strip() for o in objectives if o]
-            cleaned = [c for c in cleaned if c]
+                objectives = [objectives] if objectives else []
+
+            cleaned = [str(o).strip() for o in objectives if str(o).strip()]
             if not cleaned:
-                cleaned = ["Understand core concepts", "Apply key principles", "Analyse examples", "Evaluate outcomes"]
-            
-            return {"sessionId": sessionId or str(int(time.time()*1000)), "overview": cleaned, "category": category}
+                cleaned = [
+                    "Understand core concepts",
+                    "Apply key principles",
+                    "Analyse examples",
+                    "Evaluate outcomes"
+                ]
+
+            return {
+                "sessionId": sessionId or str(int(time.time() * 1000)),
+                "overview": cleaned,
+                "category": category
+            }
 
         # ── Units ─────────────────────────────────────────────────────────────
         elif step == 'units':
             prompt = (
-                f"Document:\n{compact_excerpt(doc_text, 1100)}{extra}\n\n"
+                f"Document:\n{doc_text}{extra}\n\n"
                 "Create a course outline as a JSON array of 4-6 units.\n"
                 'Each: {"title":"short title","description":"one sentence","estimatedScreens":6}\n'
                 "Return ONLY the JSON array."
@@ -407,7 +438,9 @@ async def generate_step(
             if not unitTitle:
                 return {"error": "Missing unitTitle"}
             title_clean = normalize_unit_title(unitTitle)
-            snippet = compact_excerpt(doc_text, 900)
+            snippet = doc_text
+            if unitDescription:
+                snippet = f"Unit focus: {unitDescription}\n\n{snippet}"
 
             prompt = f"""Generate Duolingo-style micro-learning JSON. Return ONLY valid JSON.
 
