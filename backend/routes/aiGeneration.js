@@ -7,7 +7,7 @@ import FormData from 'form-data';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getContextForStep } from '../services/documentProcessor.js';
+import { getContextForStep, isReadableText } from '../services/documentProcessor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +25,12 @@ const normalizeFilePath = (filePath) => {
 const buildGenerationFormData = (document, step, extras = {}) => {
   if (!document.extractedText?.trim()) {
     throw new Error('Document must be processed before generation. Please process the document first.');
+  }
+
+  if (!isReadableText(document.extractedText)) {
+    throw new Error(
+      'Processed document text is unreadable. Please delete and re-upload the document, or re-process it after restarting the backend.'
+    );
   }
 
   const formData = new FormData();
@@ -50,18 +56,6 @@ const buildGenerationFormData = (document, step, extras = {}) => {
   }
   if (extras.feedbackInstructions) {
     formData.append('feedbackInstructions', extras.feedbackInstructions);
-  }
-
-  // Attach file as fallback when AI service needs to re-extract
-  let filePath = document.filePath;
-  if (!fs.existsSync(filePath)) {
-    const absolutePath = path.join(process.cwd(), filePath);
-    if (fs.existsSync(absolutePath)) {
-      filePath = absolutePath;
-    }
-  }
-  if (fs.existsSync(filePath)) {
-    formData.append('file', fs.createReadStream(normalizeFilePath(filePath)));
   }
 
   return formData;
@@ -346,7 +340,8 @@ router.post('/step/overview/:documentId', protect, admin, async (req, res) => {
 
   } catch (error) {
     console.error('Overview generation error:', error);
-    res.status(500).json({ message: error.message });
+    const message = error.response?.data?.detail || error.message;
+    res.status(error.response?.status || 500).json({ message });
   }
 });
 

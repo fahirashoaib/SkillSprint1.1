@@ -365,7 +365,14 @@ async def generate_step(
         )
             response = call_ai(prompt, "json")
             logger.info(f"Overview AI response length: {len(response or '')}")
-            parsed = safe_json_loads(response)
+            try:
+                parsed = safe_json_loads(response)
+            except ValueError as parse_error:
+                logger.error(f"Overview JSON parse failed: {parse_error}")
+                raise HTTPException(
+                    status_code=422,
+                    detail="AI returned an invalid overview response. Re-process the document and try again."
+                )
 
             # Handle both response formats
             if isinstance(parsed, list):

@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { protect, admin } from '../middleware/auth.js';
 import DocumentUpload from '../models/DocumentUpload.js';
-import { extractText, chunkText } from '../services/documentProcessor.js';
+import { extractText, chunkText, isReadableText } from '../services/documentProcessor.js';
 import fs from 'fs';
 
 const router = express.Router();
@@ -120,8 +120,12 @@ router.post('/document/:id/process', protect, admin, async (req, res) => {
             return res.status(404).json({ message: 'Document not found' });
         }
         
-        // Check if already processed
-        if (document.embeddingStatus === 'completed') {
+        // Check if already processed with readable text
+        if (
+          document.embeddingStatus === 'completed' &&
+          document.extractedText?.trim() &&
+          isReadableText(document.extractedText)
+        ) {
             return res.status(400).json({ 
                 message: 'Document already processed. Use the existing processed content.' 
             });
@@ -149,6 +153,12 @@ router.post('/document/:id/process', protect, admin, async (req, res) => {
 
         const extractedText = await extractText(document.filePath, document.fileType);
         const chunks = chunkText(extractedText);
+
+        if (!isReadableText(extractedText)) {
+          throw new Error(
+            'Extracted text appears unreadable. The file may be scanned, encrypted, or corrupted.'
+          );
+        }
         
         document.extractedText = extractedText;
         document.chunkCount = chunks.length;

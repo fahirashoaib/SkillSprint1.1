@@ -1,4 +1,5 @@
 import * as mammoth from 'mammoth';
+import { PDFParse } from 'pdf-parse';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -6,49 +7,31 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Try multiple methods to import pdf-parse
-let pdfParse;
-const loadPdfParse = async () => {
-  if (pdfParse) return pdfParse;
-  
-  console.log('Loading PDF parser...');
-  
-  // Method 1: Dynamic import with .default (most common)
+/**
+ * Heuristic check that extracted content is real text, not raw PDF/binary bytes.
+ */
+export const isReadableText = (text) => {
+  const sample = (text || '').slice(0, 8000);
+  if (sample.length < 20) return false;
+
+  const letterCount = (sample.match(/[a-zA-Z]/g) || []).length;
+  if (letterCount / sample.length < 0.15) return false;
+
+  const wordCount = (sample.match(/[a-zA-Z]{2,}/g) || []).length;
+  return wordCount >= 10;
+};
+
+const extractPdfText = async (fileBuffer) => {
+  const parser = new PDFParse({ data: fileBuffer });
   try {
-    const module = await import('pdf-parse');
-    if (module.default && typeof module.default === 'function') {
-      pdfParse = module.default;
-      console.log('PDF parser loaded (method 1)');
-      return pdfParse;
-    }
-  } catch (e) {
-    console.log('Method 1 failed:', e.message);
+    const result = await parser.getText();
+    return {
+      text: (result.text || '').trim(),
+      pageCount: result.total || 0
+    };
+  } finally {
+    await parser.destroy();
   }
-  
-  // Method 2: Try require with createRequire
-  try {
-    const { createRequire } = await import('module');
-    const require = createRequire(import.meta.url);
-    pdfParse = require('pdf-parse');
-    console.log('PDF parser loaded (method 2)');
-    return pdfParse;
-  } catch (e) {
-    console.log('Method 2 failed:', e.message);
-  }
-  
-  // Method 3: Try direct import without .default
-  try {
-    const module = await import('pdf-parse');
-    if (typeof module === 'function') {
-      pdfParse = module;
-      console.log('PDF parser loaded (method 3)');
-      return pdfParse;
-    }
-  } catch (e) {
-    console.log('Method 3 failed:', e.message);
-  }
-  
-  throw new Error('Could not load pdf-parse using any method');
 };
 
 const DEFAULT_CHUNK_SIZE = 2000;
@@ -156,28 +139,12 @@ export const extractText = async (filePath, fileType) => {
     if (fileType === 'pdf') {
       console.log('Processing PDF file...');
       try {
-        // Load pdf parser
-        const pdf = await loadPdfParse();
-        
-        if (typeof pdf !== 'function') {
-          throw new Error('PDF parser is not a function');
-        }
-        
-        const data = await pdf(fileBuffer);
-        extractedText = data.text || '';
-        
-        console.log(`PDF processed: ${data.numpages || 0} pages, ${extractedText.length} characters`);
+        const { text, pageCount } = await extractPdfText(fileBuffer);
+        extractedText = text;
+        console.log(`PDF processed: ${pageCount} pages, ${extractedText.length} characters`);
       } catch (pdfError) {
         console.error('PDF parsing error:', pdfError);
-        
-        // Fallback: Try to read as text (some PDFs might be text-based)
-        try {
-          console.log('Trying fallback: reading as text...');
-          extractedText = fileBuffer.toString('utf-8');
-          console.log(`Fallback successful: ${extractedText.length} characters`);
-        } catch (fallbackError) {
-          throw new Error(`Failed to parse PDF: ${pdfError.message}`);
-        }
+        throw new Error(`Failed to parse PDF: ${pdfError.message}`);
       }
     } 
     else if (fileType === 'docx') {
@@ -202,9 +169,15 @@ export const extractText = async (filePath, fileType) => {
     
     // Basic text cleaning
     extractedText = extractedText
-      .replace(/\s+/g, ' ')  // Replace multiple spaces with single space
-      .replace(/\n\s*\n/g, '\n\n')  // Normalize newlines
+      .replace(/\s+/g, ' ')
+      .replace(/\n\s*\n/g, '\n\n')
       .trim();
+
+    if (!isReadableText(extractedText)) {
+      throw new Error(
+        'Extracted text appears unreadable. The file may be scanned, encrypted, or corrupted. Try a text-based PDF or DOCX.'
+      );
+    }
     
     return extractedText;
     
@@ -216,11 +189,12 @@ export const extractText = async (filePath, fileType) => {
 
 // Test function to verify PDF parsing works
 export const testPdfParsing = async () => {
-  console.log('🧪 Testing PDF parsing...');
+  console.log('Testing PDF parsing...');
   try {
-    const pdf = await loadPdfParse();
+    const sample = Buffer.from('%PDF-1.4');
+    const parser = new PDFParse({ data: sample });
+    await parser.destroy();
     console.log('PDF parser loaded successfully');
-    console.log('Parser type:', typeof pdf);
     return true;
   } catch (error) {
     console.error('PDF parser test failed:', error);
